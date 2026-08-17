@@ -3,10 +3,10 @@
 import { COUNTRIES } from '@/constants';
 import type { Country } from '@/constants';
 
-const COUNTRY_LABELS: Record<Country, string> = {
-  india: '🇮🇳 India',
-  brazil: '🇧🇷 Brazil',
-  south_africa: '🇿🇦 South Africa',
+const COUNTRY_CONFIG: Record<Country, { label: string; flag: string; region: string }> = {
+  india: { label: 'India', flag: '🇮🇳', region: 'Uttar Pradesh / Lucknow' },
+  brazil: { label: 'Brazil', flag: '🇧🇷', region: 'SUS / São Paulo & DF' },
+  south_africa: { label: 'South Africa', flag: '🇿🇦', region: 'NHI / Gauteng & Western Cape' },
 };
 
 interface CountryToggleProps {
@@ -16,17 +16,23 @@ interface CountryToggleProps {
 
 export default function CountryToggle({ selected, onChange }: CountryToggleProps) {
   return (
-    <div className="country-toggle" id="country-toggle">
-      {COUNTRIES.map((c) => (
-        <button
-          key={c}
-          id={`country-btn-${c}`}
-          className={`country-btn${selected === c ? ' active' : ''}`}
-          onClick={() => onChange(c)}
-        >
-          {COUNTRY_LABELS[c]}
-        </button>
-      ))}
+    <div className="country-toggle-group" id="country-toggle">
+      {COUNTRIES.map((c) => {
+        const item = COUNTRY_CONFIG[c];
+        const isSelected = selected === c;
+        return (
+          <button
+            key={c}
+            id={`country-btn-${c}`}
+            className={`country-select-btn ${isSelected ? 'active' : ''}`}
+            onClick={() => onChange(c)}
+            title={`Switch dataset to ${item.label} (${item.region})`}
+          >
+            <span className="country-flag">{item.flag}</span>
+            <span className="country-name">{item.label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

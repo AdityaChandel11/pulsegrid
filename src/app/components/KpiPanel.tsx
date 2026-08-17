@@ -1,88 +1,144 @@
 'use client';
 
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import type { Country } from '@/constants';
 
 interface KpiData {
   avgLeadTimeDays: number;
   redistributionsCompleted: number;
+  transferredUnits: number;
   protectedPairs: number;
+  totalTracked: number;
   activeSurges: number;
 }
 
 interface KpiPanelProps {
   country: Country;
+  refreshTrigger?: number;
+  onSurgeClick?: () => void;
 }
 
-export default function KpiPanel({ country }: KpiPanelProps) {
+export default function KpiPanel({ country, refreshTrigger, onSurgeClick }: KpiPanelProps) {
   const [data, setData] = useState<KpiData | null>(null);
   const [loading, setLoading] = useState(false);
-  const [secondsElapsed, setSecondsElapsed] = useState(0);
-  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     setLoading(true);
-    setSecondsElapsed(0);
     fetch(`/api/kpi?country=${country}`)
       .then((r) => r.json())
       .then((d: KpiData) => setData(d))
       .catch(() => setData(null))
       .finally(() => setLoading(false));
-  }, [country]);
-
-  // Seconds-to-action timer
-  useEffect(() => {
-    timerRef.current = setInterval(() => {
-      setSecondsElapsed((s) => s + 1);
-    }, 1000);
-    return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
-    };
-  }, []);
-
-  const formatTime = (secs: number) => {
-    const m = Math.floor(secs / 60);
-    const s = secs % 60;
-    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
+  }, [country, refreshTrigger]);
 
   return (
-    <div className="glass-card span-3 animate-in kpi-panel" id="kpi-panel">
-      <div className="card-header">
-        <span className="card-title">📊 Key Performance Indicators</span>
+    <div className="kpi-strip animate-in" id="kpi-panel">
+      {/* KPI 1: Average Stockout Lead-Time */}
+      <div className="kpi-card" id="kpi-lead-time">
+        <div className="kpi-header">
+          <span className="kpi-icon">⏳</span>
+          <span className="kpi-title">Stockout Lead-Time</span>
+        </div>
+        <div className="kpi-main">
+          {loading && !data ? (
+            <div className="shimmer kpi-shimmer" />
+          ) : (
+            <div className="kpi-value-row">
+              <span className="kpi-num font-mono text-accent">
+                {data?.avgLeadTimeDays ?? 0}
+              </span>
+              <span className="kpi-unit">days avg</span>
+            </div>
+          )}
+        </div>
+        <div className="kpi-footer">Forecasting horizon across network</div>
       </div>
 
-      {loading && <div className="shimmer" style={{ height: 80 }} />}
-
-      {!loading && data && (
-        <div className="kpi-grid">
-          <div className="kpi-item">
-            <div className="kpi-value text-accent font-mono">{data.avgLeadTimeDays}</div>
-            <div className="kpi-unit">days</div>
-            <div className="kpi-label">Stockout Lead-Time Gained</div>
-          </div>
-          <div className="kpi-item">
-            <div className="kpi-value font-mono" style={{ color: 'var(--status-ok)' }}>{formatTime(secondsElapsed)}</div>
-            <div className="kpi-unit">elapsed</div>
-            <div className="kpi-label">Seconds to Action</div>
-          </div>
-          <div className="kpi-item">
-            <div className="kpi-value font-mono" style={{ color: 'var(--status-info)' }}>{data.protectedPairs}</div>
-            <div className="kpi-unit">pairs</div>
-            <div className="kpi-label">Network Stockout-Days Reduced</div>
-          </div>
-          <div className="kpi-item">
-            <div className="kpi-value font-mono" style={{ color: 'var(--text-accent)' }}>{data.redistributionsCompleted}</div>
-            <div className="kpi-unit">transfers</div>
-            <div className="kpi-label">Redistributions Completed</div>
-          </div>
-          <div className="kpi-item">
-            <div className={`kpi-value font-mono ${data.activeSurges > 0 ? 'text-critical' : 'text-ok'}`}>{data.activeSurges}</div>
-            <div className="kpi-unit">active</div>
-            <div className="kpi-label">Active Surges</div>
-          </div>
+      {/* KPI 2: Protected Supply Pairs */}
+      <div className="kpi-card" id="kpi-protected">
+        <div className="kpi-header">
+          <span className="kpi-icon">🛡️</span>
+          <span className="kpi-title">Protected Pairs</span>
         </div>
-      )}
+        <div className="kpi-main">
+          {loading && !data ? (
+            <div className="shimmer kpi-shimmer" />
+          ) : (
+            <div className="kpi-value-row">
+              <span className="kpi-num font-mono" style={{ color: 'var(--status-ok)' }}>
+                {data?.protectedPairs ?? 0}
+              </span>
+              <span className="kpi-unit">/ {data?.totalTracked ?? 0}</span>
+            </div>
+          )}
+        </div>
+        <div className="kpi-footer">Stock level above 10-day safety buffer</div>
+      </div>
+
+      {/* KPI 3: Active Surges */}
+      <div
+        className={`kpi-card ${data && data.activeSurges > 0 ? 'kpi-alert-surge' : ''}`}
+        id="kpi-surges"
+        onClick={data && data.activeSurges > 0 ? onSurgeClick : undefined}
+        style={{ cursor: data && data.activeSurges > 0 ? 'pointer' : 'default' }}
+        title={data && data.activeSurges > 0 ? 'Click to jump to active surge' : undefined}
+      >
+        <div className="kpi-header">
+          <span className="kpi-icon">⚡</span>
+          <span className="kpi-title">Active Surges</span>
+          {data && data.activeSurges > 0 && (
+            <span className="card-badge badge-surge animate-pulse" style={{ fontSize: '0.6rem' }}>
+              ALERT
+            </span>
+          )}
+        </div>
+        <div className="kpi-main">
+          {loading && !data ? (
+            <div className="shimmer kpi-shimmer" />
+          ) : (
+            <div className="kpi-value-row">
+              <span
+                className={`kpi-num font-mono ${
+                  data && data.activeSurges > 0 ? 'text-critical' : 'text-ok'
+                }`}
+              >
+                {data?.activeSurges ?? 0}
+              </span>
+              <span className="kpi-unit">facilities</span>
+            </div>
+          )}
+        </div>
+        <div className="kpi-footer">
+          {data && data.activeSurges > 0
+            ? 'Abnormal consumption velocity'
+            : 'Nominal consumption rates'}
+        </div>
+      </div>
+
+      {/* KPI 4: Completed Redistributions */}
+      <div className="kpi-card" id="kpi-redistributions">
+        <div className="kpi-header">
+          <span className="kpi-icon">🔄</span>
+          <span className="kpi-title">Redistributions</span>
+        </div>
+        <div className="kpi-main">
+          {loading && !data ? (
+            <div className="shimmer kpi-shimmer" />
+          ) : (
+            <div className="kpi-value-row">
+              <span className="kpi-num font-mono" style={{ color: 'var(--text-accent)' }}>
+                {data?.redistributionsCompleted ?? 0}
+              </span>
+              <span className="kpi-unit">transfers</span>
+            </div>
+          )}
+        </div>
+        <div className="kpi-footer">
+          {data && data.transferredUnits > 0
+            ? `${data.transferredUnits} units balanced`
+            : 'Dispatched via event ledger'}
+        </div>
+      </div>
     </div>
   );
 }

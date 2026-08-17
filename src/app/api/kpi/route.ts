@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
   // Stockout lead-time gained: average p50 days across all active predictions
   const avgP50 = db.prepare(`
     SELECT AVG(
-      CAST((julianday(p.p50Date) - julianday('now')) AS REAL)
+      MAX(0, CAST((julianday(p.p50Date) - julianday('now')) AS REAL))
     ) AS avgDays
     FROM predictions p
     JOIN facilities f ON f.id = p.facilityId
@@ -24,18 +24,17 @@ export async function GET(request: NextRequest) {
     )
   `).get(country) as { avgDays: number | null };
 
-  // Count of redistributions completed (TRANSFERRED_IN events from api source)
+  // Count of completed paired redistributions (TRANSFERRED_IN events from API)
   const redistCount = db.prepare(`
-    SELECT COUNT(*) AS cnt
+    SELECT COUNT(*) AS cnt, COALESCE(SUM(quantity), 0) AS totalQty
     FROM inventory_events ie
     JOIN facilities f ON f.id = ie.facilityId
     WHERE f.country = ?
     AND ie.type = 'TRANSFERRED_IN'
     AND ie.source = 'api'
-  `).get(country) as { cnt: number };
+  `).get(country) as { cnt: number; totalQty: number };
 
-  // Network stockout-days reduced: count of facility-medicine pairs with p50 > 7 days
-  // (meaning early detection prevented stockout)
+  // Safe / protected facility-medicine pairs (p50 > 10 days horizon)
   const protectedPairs = db.prepare(`
     SELECT COUNT(*) AS cnt
     FROM predictions p
@@ -45,12 +44,24 @@ export async function GET(request: NextRequest) {
       SELECT MAX(p2.createdAt) FROM predictions p2
       WHERE p2.facilityId = p.facilityId AND p2.medicineId = p.medicineId
     )
-    AND julianday(p.p50Date) - julianday('now') > 0
+    AND (julianday(p.p50Date) - julianday('now')) > 10
   `).get(country) as { cnt: number };
 
-  // Surge count
-  const surgeCount = db.prepare(`
+  // Total tracked pairs
+  const totalTracked = db.prepare(`
     SELECT COUNT(*) AS cnt
+    FROM predictions p
+    JOIN facilities f ON f.id = p.facilityId
+    WHERE f.country = ?
+    AND p.createdAt = (
+      SELECT MAX(p2.createdAt) FROM predictions p2
+      WHERE p2.facilityId = p.facilityId AND p2.medicineId = p.medicineId
+    )
+  `).get(country) as { cnt: number };
+
+  // Active surge count
+  const surgeCount = db.prepare(`
+    SELECT COUNT(DISTINCT p.facilityId) AS cnt
     FROM predictions p
     JOIN facilities f ON f.id = p.facilityId
     WHERE f.country = ?
@@ -64,7 +75,9 @@ export async function GET(request: NextRequest) {
   return Response.json({
     avgLeadTimeDays: Math.max(0, Math.round((avgP50?.avgDays ?? 0) * 10) / 10),
     redistributionsCompleted: redistCount.cnt,
+    transferredUnits: redistCount.totalQty,
     protectedPairs: protectedPairs.cnt,
+    totalTracked: totalTracked.cnt,
     activeSurges: surgeCount.cnt,
   });
 }

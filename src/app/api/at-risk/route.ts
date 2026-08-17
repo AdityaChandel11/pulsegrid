@@ -15,7 +15,17 @@ export async function GET(request: NextRequest) {
     SELECT p.facilityId, p.medicineId, p.p10Date, p.p50Date, p.p90Date,
            p.confidenceScore, p.surgeFlag, p.createdAt,
            f.name AS facilityName, f.type AS facilityType, f.district,
-           m.name AS medicineName
+           m.name AS medicineName, m.category AS medicineCategory,
+           (
+             SELECT ie.source FROM inventory_events ie
+             WHERE ie.facilityId = p.facilityId AND ie.medicineId = p.medicineId
+             ORDER BY ie.timestamp DESC LIMIT 1
+           ) AS latestSource,
+           (
+             SELECT ie.timestamp FROM inventory_events ie
+             WHERE ie.facilityId = p.facilityId AND ie.medicineId = p.medicineId
+             ORDER BY ie.timestamp DESC LIMIT 1
+           ) AS latestTimestamp
     FROM predictions p
     JOIN facilities f ON f.id = p.facilityId
     JOIN medicines m ON m.id = p.medicineId
@@ -26,11 +36,21 @@ export async function GET(request: NextRequest) {
     )
     ORDER BY p.p50Date ASC
   `).all(country) as {
-    facilityId: string; medicineId: string;
-    p10Date: string; p50Date: string; p90Date: string;
-    confidenceScore: number; surgeFlag: number; createdAt: string;
-    facilityName: string; facilityType: string; district: string;
+    facilityId: string;
+    medicineId: string;
+    p10Date: string;
+    p50Date: string;
+    p90Date: string;
+    confidenceScore: number;
+    surgeFlag: number;
+    createdAt: string;
+    facilityName: string;
+    facilityType: string;
+    district: string;
     medicineName: string;
+    medicineCategory: string;
+    latestSource: 'api' | 'barcode' | 'manual' | null;
+    latestTimestamp: string | null;
   }[];
 
   const now = Date.now();
@@ -42,9 +62,25 @@ export async function GET(request: NextRequest) {
     const surgeFlag = Boolean(r.surgeFlag);
 
     // Risk score: lower p50 = higher risk, boosted by surge, weighted by confidence
-    const surgeMult = surgeFlag ? 0.5 : 1.0;
-    const confidenceWeight = r.confidenceScore / 100;
-    const riskScore = p50Days * surgeMult / Math.max(confidenceWeight, 0.1);
+    const surgeMult = surgeFlag ? 0.6 : 1.0;
+    const confidenceWeight = Math.max(r.confidenceScore / 100, 0.2);
+    const riskScore = (p50Days * surgeMult) / confidenceWeight;
+
+    // Source label & freshness
+    const source = r.latestSource || 'barcode';
+    const lastUpdated = r.latestTimestamp || r.createdAt;
+    const updatedMs = Math.max(0, now - new Date(lastUpdated).getTime());
+    const updatedMins = Math.floor(updatedMs / 60000);
+    const updatedHours = Math.floor(updatedMins / 60);
+
+    let freshnessText: string;
+    if (updatedMins < 60) {
+      freshnessText = `${Math.max(1, updatedMins)}m ago`;
+    } else if (updatedHours < 24) {
+      freshnessText = `${updatedHours}h ago`;
+    } else {
+      freshnessText = `${Math.floor(updatedHours / 24)}d ago`;
+    }
 
     return {
       facilityId: r.facilityId,
@@ -53,16 +89,20 @@ export async function GET(request: NextRequest) {
       facilityType: r.facilityType,
       district: r.district,
       medicineName: r.medicineName,
+      medicineCategory: r.medicineCategory,
       p10Days,
       p50Days,
       p90Days,
       confidenceScore: r.confidenceScore,
       surgeFlag,
       riskScore,
+      source,
+      lastUpdated,
+      freshnessText,
     };
   });
 
-  // Sort by risk score ascending (most at-risk first)
+  // Sort by risk score ascending (most urgent first)
   result.sort((a, b) => a.riskScore - b.riskScore);
 
   return Response.json(result);

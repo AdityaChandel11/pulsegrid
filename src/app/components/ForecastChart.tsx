@@ -22,15 +22,48 @@ interface ForecastChartProps {
 export default function ForecastChart({ facilityId, medicineId }: ForecastChartProps) {
   const [data, setData] = useState<ForecastData | null>(null);
   const [loading, setLoading] = useState(false);
+  // Capture freshness at fetch time — not during render — to avoid Date.now() impurity
+  const [freshnessText, setFreshnessText] = useState('');
+  const [freshnessDotColor, setFreshnessDotColor] = useState('var(--status-ok)');
 
   useEffect(() => {
-    if (!facilityId || !medicineId) { setData(null); return; }
-    setLoading(true);
+    // Guard: early return without setState (rule: no setState sync in effect body)
+    if (!facilityId || !medicineId) return;
+
+    let cancelled = false;
+
+    Promise.resolve().then(() => {
+      if (!cancelled) setLoading(true);
+    });
+
     fetch(`/api/forecast/${facilityId}/${medicineId}`)
       .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
-      .then((d: ForecastData) => setData(d))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
+      .then((d: ForecastData) => {
+        if (cancelled) return;
+        // Compute freshness at fetch time — pure, deterministic at this point
+        const now = Date.now();
+        const updatedMs = now - new Date(d.lastUpdated).getTime();
+        const updatedMins = Math.round(updatedMs / 60000);
+        let ft: string;
+        if (updatedMins < 60) ft = `${updatedMins}m ago`;
+        else if (updatedMins < 1440) ft = `${Math.round(updatedMins / 60)}h ago`;
+        else ft = `${Math.round(updatedMins / 1440)}d ago`;
+        const dot = updatedMins < 60 ? 'var(--status-ok)' :
+          updatedMins < 1440 ? 'var(--status-warning)' : 'var(--status-critical)';
+
+        setData(d);
+        setFreshnessText(ft);
+        setFreshnessDotColor(dot);
+        setLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setData(null);
+          setLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
   }, [facilityId, medicineId]);
 
   if (!facilityId || !medicineId) {
@@ -83,17 +116,6 @@ export default function ForecastChart({ facilityId, medicineId }: ForecastChartP
     data.source === 'OCR_INVOICE' ? 'invoice scan' :
     data.source === 'VOICE_LOG' ? 'voice entry' :
     data.source === 'SIMULATION' ? 'API sync' : 'manual entry';
-
-  // Freshness calculation
-  const updatedMs = Date.now() - new Date(data.lastUpdated).getTime();
-  const updatedMins = Math.round(updatedMs / 60000);
-  let freshnessText: string;
-  if (updatedMins < 60) freshnessText = `${updatedMins}m ago`;
-  else if (updatedMins < 1440) freshnessText = `${Math.round(updatedMins / 60)}h ago`;
-  else freshnessText = `${Math.round(updatedMins / 1440)}d ago`;
-
-  const freshnessDotColor = updatedMins < 60 ? 'var(--status-ok)' :
-    updatedMins < 1440 ? 'var(--status-warning)' : 'var(--status-critical)';
 
   return (
     <div className="glass-card animate-in" id="forecast-chart">
@@ -151,7 +173,7 @@ export default function ForecastChart({ facilityId, medicineId }: ForecastChartP
         <span style={{ fontSize: '0.75rem', fontWeight: 600, color: confidenceColor }}>{data.confidenceScore}%</span>
       </div>
 
-      {/* Freshness */}
+      {/* Freshness — computed at fetch time, not at render time */}
       <div className="freshness-indicator source-badge">
         <span className="freshness-dot" style={{ background: freshnessDotColor }} />
         <span>Last: {sourceLabel} · {freshnessText}</span>

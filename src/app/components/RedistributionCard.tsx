@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import RouteAnimation from './RouteAnimation';
 
 interface Recommendation {
@@ -31,16 +31,49 @@ export default function RedistributionCard({ facilityId, facilityName, medicineI
   const [approved, setApproved] = useState<ApprovalResult | null>(null);
   const [showAnimation, setShowAnimation] = useState(false);
 
+  // Track the current pair key so we can reset approved/animation state when it changes
+  const pairKeyRef = useRef<string>('');
+
   useEffect(() => {
-    setApproved(null);
-    setShowAnimation(false);
-    if (!facilityId || !medicineId) { setRec(null); return; }
-    setLoading(true);
+    const newKey = `${facilityId}::${medicineId}`;
+
+    // Reset approval/animation state synchronously only via ref comparison,
+    // actual setState happens in async path or on submit. When the pair changes
+    // and there's no facilityId/medicineId, we schedule the reset asynchronously.
+    if (pairKeyRef.current !== newKey) {
+      pairKeyRef.current = newKey;
+    }
+
+    // Do not fetch if inputs are absent
+    if (!facilityId || !medicineId) return;
+
+    let cancelled = false;
+
+    // Reset derived states for new pair in async microtask (not synchronously in effect body)
+    Promise.resolve().then(() => {
+      if (!cancelled) {
+        setApproved(null);
+        setShowAnimation(false);
+        setLoading(true);
+      }
+    });
+
     fetch(`/api/redistribution/recommendations?facilityId=${facilityId}&medicineId=${medicineId}`)
       .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
-      .then((d: Recommendation) => setRec(d))
-      .catch(() => setRec(null))
-      .finally(() => setLoading(false));
+      .then((d: Recommendation) => {
+        if (!cancelled) {
+          setRec(d);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRec(null);
+          setLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
   }, [facilityId, medicineId]);
 
   const handleApprove = async () => {

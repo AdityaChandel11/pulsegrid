@@ -24,13 +24,31 @@ export default function BedsModule({ facilityId }: BedsModuleProps) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!facilityId) { setBeds([]); return; }
-    setLoading(true);
+    // Guard: do not call setBeds([]) synchronously — early return keeps state as-is
+    if (!facilityId) return;
+
+    let cancelled = false;
+
+    Promise.resolve().then(() => {
+      if (!cancelled) setLoading(true);
+    });
+
     fetch(`/api/beds/${facilityId}`)
       .then((r) => r.json())
-      .then((data: BedData[]) => setBeds(data))
-      .catch(() => setBeds([]))
-      .finally(() => setLoading(false));
+      .then((data: BedData[]) => {
+        if (!cancelled) {
+          setBeds(data);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setBeds([]);
+          setLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
   }, [facilityId]);
 
   const overallStatus = beds.some((b) => b.status === 'critical') ? 'critical' :

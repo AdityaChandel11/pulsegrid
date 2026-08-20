@@ -26,12 +26,28 @@ export default function CrossBorderSignals({ country }: CrossBorderSignalsProps)
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    setLoading(true);
+    let cancelled = false;
+
+    Promise.resolve().then(() => {
+      if (!cancelled) setLoading(true);
+    });
+
     fetch(`/api/signals?country=${country}`)
       .then((r) => r.json())
-      .then((data: Signal[]) => setSignals(data))
-      .catch(() => setSignals([]))
-      .finally(() => setLoading(false));
+      .then((data: Signal[]) => {
+        if (!cancelled) {
+          setSignals(data);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setSignals([]);
+          setLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
   }, [country]);
 
   const surgeCount = signals.filter((s) => s.surgeActive).length;

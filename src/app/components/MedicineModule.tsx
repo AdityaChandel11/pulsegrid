@@ -14,28 +14,40 @@ export default function MedicineModule({ selectedMedicineId, onSelectMedicine, f
   const [stock, setStock] = useState<number | null>(null);
 
   useEffect(() => {
+    let cancelled = false;
     fetch('/api/medicines')
       .then((r) => r.json())
       .then((data: Medicine[]) => {
+        if (cancelled) return;
         setMedicines(data);
         if (!selectedMedicineId && data.length > 0) {
           onSelectMedicine(data[0]);
         }
       })
-      .catch(() => setMedicines([]));
+      .catch(() => {
+        if (!cancelled) setMedicines([]);
+      });
+    return () => { cancelled = true; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch citizen-check for stock info
   useEffect(() => {
-    if (!facilityId || !selectedMedicineId) { setStock(null); return; }
+    // If no facilityId or medicine, keep existing stock state — do NOT call setStock here
+    if (!facilityId || !selectedMedicineId) return;
+
+    let cancelled = false;
     fetch(`/api/citizen-check?facilityId=${facilityId}&medicineId=${selectedMedicineId}`)
       .then((r) => r.json())
       .then((data) => {
+        if (cancelled) return;
         if (data.status === 'available') setStock(1);
         else if (data.status === 'low') setStock(0);
         else setStock(-1);
       })
-      .catch(() => setStock(null));
+      .catch(() => {
+        if (!cancelled) setStock(null);
+      });
+    return () => { cancelled = true; };
   }, [facilityId, selectedMedicineId]);
 
   const selected = medicines.find((m) => m.id === selectedMedicineId);

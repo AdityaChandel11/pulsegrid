@@ -11,8 +11,9 @@ import AtRiskList, { type AtRiskItem } from './components/AtRiskList';
 import FacilityDetailPanel from './components/FacilityDetailPanel';
 import CrossBorderSignals from './components/CrossBorderSignals';
 import CitizenChecker from './components/CitizenChecker';
+import MedicineOperationsPanel from './components/MedicineOperationsPanel';
 
-type ActiveModule = 'operations' | 'citizen' | 'signals';
+type ActiveModule = 'operations' | 'medicine-ops' | 'citizen' | 'signals';
 
 export default function Home() {
   const [country, setCountry] = useState<Country>('india');
@@ -38,9 +39,19 @@ export default function Home() {
   const [simulationScenario, setSimulationScenario] = useState<'normal' | 'surge'>('normal');
   const [refreshTrigger, setRefreshTrigger] = useState(0);
   const [simTickCount, setSimTickCount] = useState(0);
+  const [simClock, setSimClock] = useState<string>('');
 
   const simIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Fetch current simulation clock time
+  const fetchClock = useCallback(() => {
+    fetch('/api/clock')
+      .then((r) => r.json())
+      .then((d: { simulationTime: string }) => {
+        if (d.simulationTime) setSimClock(d.simulationTime);
+      })
+      .catch(() => {});
+  }, []);
 
   // Fetch at-risk data to compute map severity and detect surge
   const fetchAtRiskState = useCallback(() => {
@@ -81,7 +92,8 @@ export default function Home() {
   // Initial and country change fetch
   useEffect(() => {
     fetchAtRiskState();
-  }, [fetchAtRiskState, refreshTrigger]);
+    fetchClock();
+  }, [fetchAtRiskState, fetchClock, refreshTrigger]);
 
   // Live demo simulation loop (ticks simulation endpoint every 2 seconds when enabled)
   useEffect(() => {
@@ -100,6 +112,7 @@ export default function Home() {
         .then(() => {
           setSimTickCount((prev) => prev + 1);
           setRefreshTrigger((prev) => prev + 1);
+          fetchClock();
         })
         .catch(() => {});
     }, 2000);
@@ -107,7 +120,7 @@ export default function Home() {
     return () => {
       if (simIntervalRef.current) clearInterval(simIntervalRef.current);
     };
-  }, [isSimulating, country, simulationScenario]);
+  }, [isSimulating, country, simulationScenario, fetchClock]);
 
   // Handle Manual Single Step Simulation Tick
   const handleManualTick = useCallback(() => {
@@ -120,9 +133,10 @@ export default function Home() {
       .then(() => {
         setSimTickCount((prev) => prev + 1);
         setRefreshTrigger((prev) => prev + 1);
+        fetchClock();
       })
       .catch(() => {});
-  }, [country, simulationScenario]);
+  }, [country, simulationScenario, fetchClock]);
 
   // Handle facility selection from map or list
   const handleSelectFacility = useCallback((f: Facility) => {
@@ -194,6 +208,13 @@ export default function Home() {
             📊 Operations Grid
           </button>
           <button
+            className={`module-tab-btn ${activeModule === 'medicine-ops' ? 'active' : ''}`}
+            onClick={() => setActiveModule('medicine-ops')}
+            id="tab-medicine-ops"
+          >
+            💊 Medicine Ops
+          </button>
+          <button
             className={`module-tab-btn ${activeModule === 'citizen' ? 'active' : ''}`}
             onClick={() => setActiveModule('citizen')}
             id="tab-citizen"
@@ -226,6 +247,11 @@ export default function Home() {
           <span className="sim-ticks font-mono">
             {simTickCount > 0 ? `[Tick #${simTickCount}]` : '[Idle]'}
           </span>
+          {simClock && (
+            <span className="sim-clock-hud font-mono text-cyan" style={{ fontSize: '0.72rem', marginLeft: 8 }}>
+              📅 {simClock.replace('T', ' ').substring(0, 16)} UTC
+            </span>
+          )}
         </div>
 
         <div className="sim-actions-group">
@@ -302,7 +328,19 @@ export default function Home() {
           </div>
         )}
 
-        {/* View 2: Citizen Availability Portal */}
+        {/* View 2: Medicine Operations Core (Authoritative CRUD, Batches, Ledger, Explainability) */}
+        {activeModule === 'medicine-ops' && (
+          <div className="module-view-container animate-in">
+            <MedicineOperationsPanel
+              country={country}
+              initialFacilityId={selectedFacility?.id}
+              initialMedicineId={selectedMedicineId}
+              onFacilityChange={handleSelectFacility}
+            />
+          </div>
+        )}
+
+        {/* View 3: Citizen Availability Portal */}
         {activeModule === 'citizen' && (
           <div className="module-view-container animate-in">
             <CitizenChecker
@@ -313,7 +351,7 @@ export default function Home() {
           </div>
         )}
 
-        {/* View 3: Cross-Border Signal Exchange */}
+        {/* View 4: Cross-Border Signal Exchange */}
         {activeModule === 'signals' && (
           <div className="module-view-container animate-in">
             <CrossBorderSignals country={country} />

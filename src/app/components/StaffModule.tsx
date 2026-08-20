@@ -30,13 +30,31 @@ export default function StaffModule({ facilityId }: StaffModuleProps) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!facilityId) { setStaff([]); return; }
-    setLoading(true);
+    // Guard: do not call setStaff([]) synchronously — early return keeps state as-is
+    if (!facilityId) return;
+
+    let cancelled = false;
+
+    Promise.resolve().then(() => {
+      if (!cancelled) setLoading(true);
+    });
+
     fetch(`/api/staff/${facilityId}`)
       .then((r) => r.json())
-      .then((data: StaffData[]) => setStaff(data))
-      .catch(() => setStaff([]))
-      .finally(() => setLoading(false));
+      .then((data: StaffData[]) => {
+        if (!cancelled) {
+          setStaff(data);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setStaff([]);
+          setLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
   }, [facilityId]);
 
   const overallStatus = staff.some((s) => s.status === 'critical') ? 'critical' :

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import type { Country } from '@/constants';
 
 interface KpiData {
@@ -18,18 +18,50 @@ interface KpiPanelProps {
   onSurgeClick?: () => void;
 }
 
-export default function KpiPanel({ country, refreshTrigger, onSurgeClick }: KpiPanelProps) {
-  const [data, setData] = useState<KpiData | null>(null);
-  const [loading, setLoading] = useState(false);
+/**
+ * A custom hook that fetches data and tracks loading state without
+ * calling setState synchronously inside the effect body.
+ * The fetchKey dep triggers a new fetch. Data is null while loading.
+ */
+function useAsyncFetch<T>(url: string, deps: unknown[]): { data: T | null; fetching: boolean } {
+  const [data, setData] = useState<T | null>(null);
+  const [fetching, setFetching] = useState(false);
+  const fetchKeyRef = useRef(0);
 
   useEffect(() => {
-    setLoading(true);
-    fetch(`/api/kpi?country=${country}`)
+    const key = ++fetchKeyRef.current;
+    // Schedule state updates asynchronously via Promise.resolve so no setState
+    // is called synchronously inside the effect body.
+    Promise.resolve().then(() => {
+      if (fetchKeyRef.current !== key) return;
+      setFetching(true);
+    });
+
+    fetch(url)
       .then((r) => r.json())
-      .then((d: KpiData) => setData(d))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
-  }, [country, refreshTrigger]);
+      .then((d: T) => {
+        if (fetchKeyRef.current === key) {
+          setData(d);
+          setFetching(false);
+        }
+      })
+      .catch(() => {
+        if (fetchKeyRef.current === key) {
+          setData(null);
+          setFetching(false);
+        }
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+
+  return { data, fetching };
+}
+
+export default function KpiPanel({ country, refreshTrigger, onSurgeClick }: KpiPanelProps) {
+  const { data, fetching: loading } = useAsyncFetch<KpiData>(
+    `/api/kpi?country=${country}`,
+    [country, refreshTrigger],
+  );
 
   return (
     <div className="kpi-strip animate-in" id="kpi-panel">

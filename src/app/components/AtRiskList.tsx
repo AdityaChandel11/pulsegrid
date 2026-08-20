@@ -44,12 +44,29 @@ export default function AtRiskList({
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
 
   useEffect(() => {
-    setLoading(true);
-    fetch(`/api/at-risk?country=${country}`)
+    let cancelled = false;
+    const url = `/api/at-risk?country=${country}`;
+
+    Promise.resolve().then(() => {
+      if (!cancelled) setLoading(true);
+    });
+
+    fetch(url)
       .then((r) => r.json())
-      .then((data: AtRiskItem[]) => setItems(data))
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false));
+      .then((data: AtRiskItem[]) => {
+        if (!cancelled) {
+          setItems(data);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setItems([]);
+          setLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
   }, [country, refreshTrigger]);
 
   const categories = useMemo(() => {

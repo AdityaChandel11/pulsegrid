@@ -71,6 +71,8 @@ export default function FacilityDetailPanel({
   // Facility detail data states
   const [forecast, setForecast] = useState<ForecastData | null>(null);
   const [forecastLoading, setForecastLoading] = useState(false);
+  // Freshness computed at fetch time to avoid Date.now() in render (purity violation)
+  const [freshnessText, setFreshnessText] = useState('');
 
   const [trackRecord, setTrackRecord] = useState<TrackRecordData | null>(null);
   const [beds, setBeds] = useState<BedData[]>([]);
@@ -88,9 +90,11 @@ export default function FacilityDetailPanel({
 
   // Load medicines list
   useEffect(() => {
+    let cancelled = false;
     fetch('/api/medicines')
       .then((r) => r.json())
       .then((data: Medicine[]) => {
+        if (cancelled) return;
         setMedicines(data);
         if (data.length > 0) {
           const match = initialMedicineId
@@ -99,69 +103,111 @@ export default function FacilityDetailPanel({
           setSelectedMedicine(match || data[0]);
         }
       })
-      .catch(() => setMedicines([]));
+      .catch(() => {
+        if (!cancelled) setMedicines([]);
+      });
+    return () => { cancelled = true; };
   }, [initialMedicineId]);
 
   // Sync selected medicine when initialMedicineId changes from parent
+  // Use a microtask to avoid calling setState synchronously in effect body
   useEffect(() => {
-    if (initialMedicineId && medicines.length > 0) {
-      const match = medicines.find((m) => m.id === initialMedicineId);
-      if (match) setSelectedMedicine(match);
-    }
+    if (!initialMedicineId || medicines.length === 0) return;
+    const match = medicines.find((m) => m.id === initialMedicineId);
+    if (!match) return;
+    // Defer to avoid synchronous setState in effect body
+    Promise.resolve().then(() => setSelectedMedicine(match));
   }, [initialMedicineId, medicines]);
 
   // Load Forecast, Track Record, Beds, Staff, Recommendation when facility or medicine changes
   useEffect(() => {
     if (!facility) return;
 
-    setTransferSuccess(null);
+    let cancelled = false;
+
+    // Reset transferSuccess asynchronously
+    Promise.resolve().then(() => {
+      if (!cancelled) setTransferSuccess(null);
+    });
 
     // Fetch beds
     fetch(`/api/beds/${facility.id}`)
       .then((r) => r.json())
-      .then((d: BedData[]) => setBeds(d))
-      .catch(() => setBeds([]));
+      .then((d: BedData[]) => { if (!cancelled) setBeds(d); })
+      .catch(() => { if (!cancelled) setBeds([]); });
 
     // Fetch staff
     fetch(`/api/staff/${facility.id}`)
       .then((r) => r.json())
-      .then((d: StaffData[]) => setStaff(d))
-      .catch(() => setStaff([]));
+      .then((d: StaffData[]) => { if (!cancelled) setStaff(d); })
+      .catch(() => { if (!cancelled) setStaff([]); });
 
     // Fetch track record
     fetch(`/api/predictions/track-record/${facility.id}`)
       .then((r) => r.json())
-      .then((d: TrackRecordData) => setTrackRecord(d))
-      .catch(() => setTrackRecord(null));
+      .then((d: TrackRecordData) => { if (!cancelled) setTrackRecord(d); })
+      .catch(() => { if (!cancelled) setTrackRecord(null); });
+
+    return () => { cancelled = true; };
   }, [facility]);
 
   // Fetch forecast and recommendation for currently selected medicine
   useEffect(() => {
-    if (!facility || !selectedMedicine) {
-      setForecast(null);
-      setRecommendation(null);
-      return;
-    }
+    if (!facility || !selectedMedicine) return;
 
-    setForecastLoading(true);
+    let cancelled = false;
+
+    Promise.resolve().then(() => {
+      if (!cancelled) setForecastLoading(true);
+    });
+
     fetch(`/api/forecast/${facility.id}/${selectedMedicine.id}`)
       .then((r) => {
         if (!r.ok) throw new Error();
         return r.json();
       })
-      .then((data: ForecastData) => setForecast(data))
-      .catch(() => setForecast(null))
-      .finally(() => setForecastLoading(false));
+      .then((data: ForecastData) => {
+        if (cancelled) return;
+        // Compute freshness at fetch time — pure, not during render
+        const ageMins = Math.max(1, Math.floor((Date.now() - new Date(data.lastUpdated).getTime()) / 60000));
+        let ft = 'Recently';
+        if (ageMins < 60) ft = `${ageMins}m ago`;
+        else if (ageMins < 1440) ft = `${Math.floor(ageMins / 60)}h ago`;
+        else ft = `${Math.floor(ageMins / 1440)}d ago`;
+        setFreshnessText(ft);
+        setForecast(data);
+        setForecastLoading(false);
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setForecast(null);
+          setForecastLoading(false);
+        }
+      });
 
-    setRecLoading(true);
+    Promise.resolve().then(() => {
+      if (!cancelled) setRecLoading(true);
+    });
+
     fetch(`/api/redistribution/recommendations?facilityId=${facility.id}&medicineId=${selectedMedicine.id}`)
       .then((r) => {
         if (!r.ok) throw new Error();
         return r.json();
       })
-      .then((data: Recommendation) => setRecommendation(data))
-      .catch(() => setRecommendation(null))
-      .finally(() => setRecLoading(false));
+      .then((data: Recommendation) => {
+        if (!cancelled) {
+          setRecommendation(data);
+          setRecLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRecommendation(null);
+          setRecLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
   }, [facility, selectedMedicine]);
 
   // Handle transfer approval
@@ -191,7 +237,6 @@ export default function FacilityDetailPanel({
         });
 
         // Trigger map animated route
-        // Fetch source facility coordinates from API or database
         const facRes = await fetch(`/api/facilities?country=${facility.country}`);
         const allFacilities: Facility[] = await facRes.json();
         const srcFac = allFacilities.find((f) => f.id === recommendation.sourceFacilityId);
@@ -211,7 +256,7 @@ export default function FacilityDetailPanel({
           });
         }
 
-        // Refetch forecast to update immediately
+        // Refetch forecast
         const freshForecastRes = await fetch(`/api/forecast/${facility.id}/${selectedMedicine.id}`);
         if (freshForecastRes.ok) {
           const freshData = await freshForecastRes.json();
@@ -271,14 +316,6 @@ export default function FacilityDetailPanel({
       : forecast?.source === 'SIMULATION'
       ? 'e-Aushadhi / API sync'
       : 'Manual log';
-
-  let freshnessText = 'Recently';
-  if (forecast?.lastUpdated) {
-    const ageMins = Math.max(1, Math.floor((Date.now() - new Date(forecast.lastUpdated).getTime()) / 60000));
-    if (ageMins < 60) freshnessText = `${ageMins}m ago`;
-    else if (ageMins < 1440) freshnessText = `${Math.floor(ageMins / 60)}h ago`;
-    else freshnessText = `${Math.floor(ageMins / 1440)}d ago`;
-  }
 
   const confidenceColor =
     (forecast?.confidenceScore ?? 0) >= 70

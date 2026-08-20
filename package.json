@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "db:seed": "tsx src/db/seed.ts"
+    "db:seed": "tsx src/db/seed.ts",
+    "test": "tsx --test src/__tests__/inventory.test.ts"
   },
   "dependencies": {
     "@types/leaflet": "^1.9.22",

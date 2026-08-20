@@ -196,6 +196,19 @@ function generateMedicines(): Medicine[] {
   }));
 }
 
+/** Generate a batch number like BT-202603-4821 */
+function batchNum(year: number, month: number): string {
+  const seq = String(Math.floor(rng() * 9000) + 1000);
+  return `BT-${year}${String(month).padStart(2, '0')}-${seq}`;
+}
+
+/** Generate an expiry date N months from a reference date, clamped to a YYYY-MM-DD string */
+function expiryDateStr(refDate: Date, plusMonths: number): string {
+  const d = new Date(refDate);
+  d.setMonth(d.getMonth() + plusMonths);
+  return d.toISOString().split('T')[0];
+}
+
 function generateInventoryEvents(
   facilities: Facility[],
   medicines: Medicine[],
@@ -227,6 +240,9 @@ function generateInventoryEvents(
       const startDate = new Date(now);
       startDate.setDate(startDate.getDate() - SEED_HISTORY_DAYS - 7);
 
+      // Batch 1: initial stock — expiry 24-36 months out (safe)
+      const batch1Expiry = randInt(24, 36);
+      const batch1 = batchNum(startDate.getFullYear(), startDate.getMonth() + 1);
       events.push({
         id: uuid(),
         facilityId: facility.id,
@@ -234,8 +250,10 @@ function generateInventoryEvents(
         type: 'RECEIVED',
         quantity: initialStock,
         timestamp: startDate.toISOString(),
-        source: 'SIMULATION',
-        notes: 'Initial stock',
+        source: 'BARCODE',
+        batchNumber: batch1,
+        expiryDate: expiryDateStr(startDate, batch1Expiry),
+        notes: 'Initial stock — barcode scanned',
       });
 
       // Periodic resupply every ~15 days
@@ -244,6 +262,21 @@ function generateInventoryEvents(
         resupplyDate.setDate(resupplyDate.getDate() - SEED_HISTORY_DAYS + d);
         resupplyDate.setHours(randInt(6, 10), randInt(0, 59));
 
+        // Vary source: OCR_INVOICE (~40%), BARCODE (~35%), VOICE_LOG (~15%), MANUAL (~10%)
+        const r2 = rng();
+        const resupplySource: 'OCR_INVOICE' | 'BARCODE' | 'VOICE_LOG' | 'MANUAL' =
+          r2 < 0.40 ? 'OCR_INVOICE' :
+          r2 < 0.75 ? 'BARCODE' :
+          r2 < 0.90 ? 'VOICE_LOG' : 'MANUAL';
+
+        // Batch expiry: mostly 18-30 months, ~10% near-expiry (2-4 months), ~5% already expired (-1 to 0)
+        const rExp = rng();
+        let expiryMonths: number;
+        if (rExp < 0.05) expiryMonths = randInt(-1, 0);   // already expired
+        else if (rExp < 0.15) expiryMonths = randInt(1, 3); // near expiry
+        else expiryMonths = randInt(18, 30);               // safe
+
+        const resupplyBatch = batchNum(resupplyDate.getFullYear(), resupplyDate.getMonth() + 1);
         events.push({
           id: uuid(),
           facilityId: facility.id,
@@ -251,8 +284,12 @@ function generateInventoryEvents(
           type: 'RECEIVED',
           quantity: Math.round(template.dailyBaseline * randInt(10, 20)),
           timestamp: resupplyDate.toISOString(),
-          source: 'SIMULATION',
-          notes: 'Routine resupply',
+          source: resupplySource,
+          batchNumber: resupplyBatch,
+          expiryDate: expiryDateStr(resupplyDate, expiryMonths),
+          notes: resupplySource === 'OCR_INVOICE' ? 'Invoice-scanned delivery' :
+                 resupplySource === 'VOICE_LOG' ? 'Voice-logged delivery' :
+                 resupplySource === 'BARCODE' ? 'Barcode-scanned delivery' : 'Manual receipt',
         });
       }
 
@@ -277,18 +314,18 @@ function generateInventoryEvents(
         }
 
         // Determine source with stagger:
-        // Recent (last 3 days): 50% api, 30% barcode, 20% manual
+        // Recent (last 3 days): API/barcode dominant
         // Semi-recent (4-10 days): mixed
-        // Older: more manual
+        // Older: more manual/voice
         const daysAgo = SEED_HISTORY_DAYS - d;
-        let source: 'SIMULATION' | 'BARCODE' | 'MANUAL';
+        let source: 'SIMULATION' | 'BARCODE' | 'MANUAL' | 'VOICE_LOG' | 'OCR_INVOICE';
         const r = rng();
         if (daysAgo <= 3) {
-          source = r < 0.50 ? 'SIMULATION' : r < 0.80 ? 'BARCODE' : 'MANUAL';
+          source = r < 0.45 ? 'SIMULATION' : r < 0.75 ? 'BARCODE' : r < 0.90 ? 'OCR_INVOICE' : 'MANUAL';
         } else if (daysAgo <= 10) {
-          source = r < 0.30 ? 'SIMULATION' : r < 0.60 ? 'BARCODE' : 'MANUAL';
+          source = r < 0.25 ? 'SIMULATION' : r < 0.55 ? 'BARCODE' : r < 0.75 ? 'OCR_INVOICE' : r < 0.90 ? 'VOICE_LOG' : 'MANUAL';
         } else {
-          source = r < 0.15 ? 'SIMULATION' : r < 0.35 ? 'BARCODE' : 'MANUAL';
+          source = r < 0.10 ? 'SIMULATION' : r < 0.30 ? 'BARCODE' : r < 0.50 ? 'OCR_INVOICE' : r < 0.70 ? 'VOICE_LOG' : 'MANUAL';
         }
 
         // Adjust timestamps for staleness
@@ -314,10 +351,11 @@ function generateInventoryEvents(
         });
       }
 
-      // Occasional EXPIRED / DAMAGED events
+      // Occasional EXPIRED / DAMAGED events (with batch references)
       if (rng() < 0.15) {
         const expDate = new Date(now);
         expDate.setDate(expDate.getDate() - randInt(5, 30));
+        const expBatch = batchNum(expDate.getFullYear() - 1, expDate.getMonth() + 1);
         events.push({
           id: uuid(),
           facilityId: facility.id,
@@ -326,7 +364,9 @@ function generateInventoryEvents(
           quantity: randInt(5, 30),
           timestamp: expDate.toISOString(),
           source: 'MANUAL',
-          notes: 'Expired batch removed',
+          batchNumber: expBatch,
+          expiryDate: expiryDateStr(expDate, -randInt(1, 6)), // already past expiry
+          notes: 'Expired batch removed from stock',
         });
       }
       if (rng() < 0.08) {

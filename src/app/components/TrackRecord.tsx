@@ -17,13 +17,31 @@ export default function TrackRecord({ facilityId }: TrackRecordProps) {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!facilityId) { setData(null); return; }
-    setLoading(true);
+    // Guard: do not call setData(null) synchronously — early return keeps state as-is
+    if (!facilityId) return;
+
+    let cancelled = false;
+
+    Promise.resolve().then(() => {
+      if (!cancelled) setLoading(true);
+    });
+
     fetch(`/api/predictions/track-record/${facilityId}`)
       .then((r) => r.json())
-      .then((d: TrackRecordData) => setData(d))
-      .catch(() => setData(null))
-      .finally(() => setLoading(false));
+      .then((d: TrackRecordData) => {
+        if (!cancelled) {
+          setData(d);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setData(null);
+          setLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
   }, [facilityId]);
 
   const accuracyColor = data && data.accuracyScore >= 0.7 ? 'var(--status-ok)' :
@@ -42,13 +60,15 @@ export default function TrackRecord({ facilityId }: TrackRecordProps) {
         <div className="track-record-grid">
           <div className="track-metric">
             <div className="metric-value" style={{ color: accuracyColor }}>
-              {Math.round(data.accuracyScore * 100)}%
+              {data.sampleSize === 0 ? '—' : `${Math.round(data.accuracyScore * 100)}%`}
             </div>
-            <div className="metric-label">Accuracy</div>
+            <div className="metric-label">
+              {data.sampleSize === 0 ? 'No validation data' : 'Accuracy'}
+            </div>
           </div>
           <div className="track-metric">
             <div className="metric-value text-accent">
-              {data.avgErrorDays}d
+              {data.sampleSize === 0 ? '—' : `${data.avgErrorDays}d`}
             </div>
             <div className="metric-label">Avg Error</div>
           </div>

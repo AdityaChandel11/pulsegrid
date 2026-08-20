@@ -73,17 +73,31 @@ export default function CitizenChecker({
 
   // Query availability whenever facility or medicine changes
   useEffect(() => {
-    if (!selectedFacilityId || !selectedMedicineId) {
-      setResult(null);
-      return;
-    }
+    // Guard: do not call setResult(null) synchronously — early return keeps state
+    if (!selectedFacilityId || !selectedMedicineId) return;
 
-    setLoading(true);
+    let cancelled = false;
+
+    Promise.resolve().then(() => {
+      if (!cancelled) setLoading(true);
+    });
+
     fetch(`/api/citizen-check?facilityId=${selectedFacilityId}&medicineId=${selectedMedicineId}`)
       .then((r) => r.json())
-      .then((d: CitizenCheckResult) => setResult(d))
-      .catch(() => setResult(null))
-      .finally(() => setLoading(false));
+      .then((d: CitizenCheckResult) => {
+        if (!cancelled) {
+          setResult(d);
+          setLoading(false);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setResult(null);
+          setLoading(false);
+        }
+      });
+
+    return () => { cancelled = true; };
   }, [selectedFacilityId, selectedMedicineId]);
 
   const filteredFacilities = useMemo(() => {

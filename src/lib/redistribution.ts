@@ -143,7 +143,7 @@ export async function getRecommendation(
   }
 
   // Deterministic fallback: nearest sufficient candidate
-  return deterministicPick(candidates, reqFacName, medName, forecast, facilityId, medicineId);
+  return deterministicPick(candidates, reqFacName, medName, forecast);
 }
 
 /**
@@ -154,8 +154,6 @@ function deterministicPick(
   reqFacName: string,
   medName: string,
   forecast: { p50Days: number },
-  _facilityId: string,
-  _medicineId: string,
 ): Recommendation {
   const best = candidates[0]; // already sorted by distance
   return {

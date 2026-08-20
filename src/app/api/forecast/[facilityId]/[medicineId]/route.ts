@@ -13,7 +13,8 @@ export async function GET(
   const forecast = computeForecast(facilityId, medicineId);
   const meta = getLatestEventMeta(facilityId, medicineId);
 
-  const source = meta?.source ?? 'manual';
+  const source = meta?.source ?? 'MANUAL';
+
   const lastUpdated = meta?.timestamp ?? SimulationClock.getISO();
 
   const confidenceScore = computeConfidence({

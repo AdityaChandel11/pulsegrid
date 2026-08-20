@@ -1,37 +1,20 @@
 /**
- * PulseGrid — Inventory Event Processing
+ * PulseGrid — Inventory Query Helpers
  *
- * Derives current stock from the event-sourced inventory_events table
- * and produces daily dispensed series for forecasting.
+ * READ-ONLY helpers used by forecast, redistribution, and confidence modules.
+ * Stock computation is delegated to inventoryService.deriveCurrentStock — the
+ * single authoritative implementation. Do not add another stock formula here.
+ *
+ * For WRITING events, always use inventoryService.recordInventoryEvent().
  */
 
 import { getDb } from '@/db/connection';
 import { SimulationClock } from './clock';
+import { deriveCurrentStock } from '@/services/inventoryService';
+import type { InventoryEventSource } from '@/types';
 
-const INFLOW_TYPES = ['RECEIVED', 'TRANSFERRED_IN'] as const;
-const OUTFLOW_TYPES = ['DISPENSED', 'TRANSFERRED_OUT', 'EXPIRED', 'DAMAGED'] as const;
-
-/**
- * Compute net current stock for a facility-medicine pair by summing
- * all inflow events and subtracting all outflow events.
- */
-export function getCurrentStock(facilityId: string, medicineId: string): number {
-  const db = getDb();
-
-  const inflow = db.prepare(`
-    SELECT COALESCE(SUM(quantity), 0) AS total
-    FROM inventory_events
-    WHERE facilityId = ? AND medicineId = ? AND type IN (${INFLOW_TYPES.map(() => '?').join(',')})
-  `).get(facilityId, medicineId, ...INFLOW_TYPES) as { total: number };
-
-  const outflow = db.prepare(`
-    SELECT COALESCE(SUM(quantity), 0) AS total
-    FROM inventory_events
-    WHERE facilityId = ? AND medicineId = ? AND type IN (${OUTFLOW_TYPES.map(() => '?').join(',')})
-  `).get(facilityId, medicineId, ...OUTFLOW_TYPES) as { total: number };
-
-  return inflow.total - outflow.total;
-}
+// Re-export so existing callers (forecast, redistribution, simulation) keep working.
+export { deriveCurrentStock as getCurrentStock };
 
 /**
  * Aggregate DISPENSED events into a daily series (most recent `days` days).
@@ -48,13 +31,15 @@ export function getDailyDispensedSeries(
   cutoff.setDate(cutoff.getDate() - days);
   const cutoffISO = cutoff.toISOString();
 
-  const rows = db.prepare(`
-    SELECT DATE(timestamp) AS date, SUM(quantity) AS qty
-    FROM inventory_events
-    WHERE facilityId = ? AND medicineId = ? AND type = 'DISPENSED' AND timestamp >= ?
-    GROUP BY DATE(timestamp)
-    ORDER BY date ASC
-  `).all(facilityId, medicineId, cutoffISO) as { date: string; qty: number }[];
+  const rows = db
+    .prepare(
+      `SELECT DATE(timestamp) AS date, SUM(quantity) AS qty
+       FROM inventory_events
+       WHERE facilityId = ? AND medicineId = ? AND type = 'DISPENSED' AND timestamp >= ?
+       GROUP BY DATE(timestamp)
+       ORDER BY date ASC`,
+    )
+    .all(facilityId, medicineId, cutoffISO) as { date: string; qty: number }[];
 
   return rows;
 }
@@ -65,16 +50,20 @@ export function getDailyDispensedSeries(
 export function getLatestEventMeta(
   facilityId: string,
   medicineId: string,
-): { source: 'api' | 'barcode' | 'manual'; timestamp: string } | null {
+): { source: InventoryEventSource; timestamp: string } | null {
   const db = getDb();
 
-  const row = db.prepare(`
-    SELECT source, timestamp
-    FROM inventory_events
-    WHERE facilityId = ? AND medicineId = ?
-    ORDER BY timestamp DESC
-    LIMIT 1
-  `).get(facilityId, medicineId) as { source: 'api' | 'barcode' | 'manual'; timestamp: string } | undefined;
+  const row = db
+    .prepare(
+      `SELECT source, timestamp
+       FROM inventory_events
+       WHERE facilityId = ? AND medicineId = ?
+       ORDER BY timestamp DESC
+       LIMIT 1`,
+    )
+    .get(facilityId, medicineId) as
+    | { source: InventoryEventSource; timestamp: string }
+    | undefined;
 
   return row ?? null;
 }
@@ -84,8 +73,8 @@ export function getLatestEventMeta(
  */
 export function getMedicineIdsAtFacility(facilityId: string): string[] {
   const db = getDb();
-  const rows = db.prepare(`
-    SELECT DISTINCT medicineId FROM inventory_events WHERE facilityId = ?
-  `).all(facilityId) as { medicineId: string }[];
+  const rows = db
+    .prepare('SELECT DISTINCT medicineId FROM inventory_events WHERE facilityId = ?')
+    .all(facilityId) as { medicineId: string }[];
   return rows.map(r => r.medicineId);
 }

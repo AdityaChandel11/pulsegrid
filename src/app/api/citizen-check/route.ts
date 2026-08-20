@@ -33,8 +33,11 @@ export async function GET(request: NextRequest) {
     const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
     const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));
 
-    const sourceLabel = meta.source === 'api' ? 'API sync' :
-      meta.source === 'barcode' ? 'barcode scan' : 'manual entry';
+    const sourceLabel = meta.source === 'SIMULATION' ? 'API sync' :
+      meta.source === 'BARCODE' ? 'barcode scan' :
+      meta.source === 'OCR_INVOICE' ? 'invoice scan' :
+      meta.source === 'VOICE_LOG' ? 'voice entry' : 'manual entry';
+
 
     if (ageMinutes < 60) {
       freshnessText = `Confirmed ${ageMinutes} minutes ago (${sourceLabel})`;

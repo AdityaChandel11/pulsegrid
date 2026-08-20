@@ -12,6 +12,7 @@ import { computeForecast } from './forecast';
 import { computeConfidence } from './confidence';
 import { getLatestEventMeta } from './inventory';
 import { SimulationClock } from './clock';
+import { recordTransfer } from '@/services/inventoryService';
 import type { Facility } from '@/types';
 
 interface Candidate {
@@ -242,33 +243,20 @@ export function executeTransfer(
   medicineId: string,
   quantity: number,
 ): { newStockAtSource: number; newStockAtDestination: number } {
-  const currentStock = getCurrentStock(sourceFacilityId, medicineId);
-  if (quantity > currentStock) {
-    throw new Error(
-      `Insufficient stock: transfer quantity (${quantity}) exceeds current stock (${currentStock}) at source facility ${sourceFacilityId}`,
-    );
-  }
-
-  const db = getDb();
   const now = SimulationClock.getISO();
 
-  const id1 = crypto.randomUUID();
-  const id2 = crypto.randomUUID();
-
-  const insert = db.prepare(`
-    INSERT INTO inventory_events (id, facilityId, medicineId, type, quantity, timestamp, source, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const txn = db.transaction(() => {
-    insert.run(id1, sourceFacilityId, medicineId, 'TRANSFERRED_OUT', quantity, now, 'api', `Transfer to ${destFacilityId}`);
-    insert.run(id2, destFacilityId, medicineId, 'TRANSFERRED_IN', quantity, now, 'api', `Transfer from ${sourceFacilityId}`);
+  const result = recordTransfer({
+    sourceFacilityId,
+    destFacilityId,
+    medicineId,
+    quantity,
+    timestamp: now,
+    source: 'MANUAL',
+    notes: `Transfer from ${sourceFacilityId} to ${destFacilityId}`,
   });
 
-  txn();
-
   return {
-    newStockAtSource: getCurrentStock(sourceFacilityId, medicineId),
-    newStockAtDestination: getCurrentStock(destFacilityId, medicineId),
+    newStockAtSource: result.newStockAtSource,
+    newStockAtDestination: result.newStockAtDestination,
   };
 }

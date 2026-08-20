@@ -6,6 +6,7 @@
  */
 
 import { initDb, closeDb } from './connection';
+import { recordInventoryEvent } from '../services/inventoryService';
 import type {
   Facility, Medicine, InventoryEvent, Bed, StaffRosterEntry, Prediction, CountrySignal,
 } from '../types';
@@ -224,7 +225,7 @@ function generateInventoryEvents(
       const template = MEDICINE_CATALOG.find(m => m.name === med.name)!;
       const initialStock = template.dailyBaseline * randInt(45, 90);
       const startDate = new Date(now);
-      startDate.setDate(startDate.getDate() - SEED_HISTORY_DAYS - 1);
+      startDate.setDate(startDate.getDate() - SEED_HISTORY_DAYS - 7);
 
       events.push({
         id: uuid(),
@@ -233,7 +234,7 @@ function generateInventoryEvents(
         type: 'RECEIVED',
         quantity: initialStock,
         timestamp: startDate.toISOString(),
-        source: 'api',
+        source: 'SIMULATION',
         notes: 'Initial stock',
       });
 
@@ -250,7 +251,7 @@ function generateInventoryEvents(
           type: 'RECEIVED',
           quantity: Math.round(template.dailyBaseline * randInt(10, 20)),
           timestamp: resupplyDate.toISOString(),
-          source: 'api',
+          source: 'SIMULATION',
           notes: 'Routine resupply',
         });
       }
@@ -280,21 +281,26 @@ function generateInventoryEvents(
         // Semi-recent (4-10 days): mixed
         // Older: more manual
         const daysAgo = SEED_HISTORY_DAYS - d;
-        let source: 'api' | 'barcode' | 'manual';
+        let source: 'SIMULATION' | 'BARCODE' | 'MANUAL';
         const r = rng();
         if (daysAgo <= 3) {
-          source = r < 0.50 ? 'api' : r < 0.80 ? 'barcode' : 'manual';
+          source = r < 0.50 ? 'SIMULATION' : r < 0.80 ? 'BARCODE' : 'MANUAL';
         } else if (daysAgo <= 10) {
-          source = r < 0.30 ? 'api' : r < 0.60 ? 'barcode' : 'manual';
+          source = r < 0.30 ? 'SIMULATION' : r < 0.60 ? 'BARCODE' : 'MANUAL';
         } else {
-          source = r < 0.15 ? 'api' : r < 0.35 ? 'barcode' : 'manual';
+          source = r < 0.15 ? 'SIMULATION' : r < 0.35 ? 'BARCODE' : 'MANUAL';
         }
 
         // Adjust timestamps for staleness
-        if (source === 'manual') {
+        if (source === 'MANUAL') {
           eventDate.setDate(eventDate.getDate() - randInt(3, 5));
-        } else if (source === 'barcode') {
+        } else if (source === 'BARCODE') {
           eventDate.setHours(eventDate.getHours() - randInt(4, 24));
+        }
+
+        // Ensure event timestamp is strictly after initial delivery
+        if (eventDate <= startDate) {
+          eventDate.setTime(startDate.getTime() + (d + 1) * 3600000 * 2);
         }
 
         events.push({
@@ -319,7 +325,7 @@ function generateInventoryEvents(
           type: 'EXPIRED' as InventoryEventType,
           quantity: randInt(5, 30),
           timestamp: expDate.toISOString(),
-          source: 'manual',
+          source: 'MANUAL',
           notes: 'Expired batch removed',
         });
       }
@@ -333,7 +339,7 @@ function generateInventoryEvents(
           type: 'DAMAGED' as InventoryEventType,
           quantity: randInt(2, 15),
           timestamp: dmgDate.toISOString(),
-          source: 'manual',
+          source: 'MANUAL',
           notes: 'Water damage / broken packaging',
         });
       }
@@ -524,13 +530,23 @@ function main() {
     insertMedicine.run(m.id, m.name, m.category, m.unit);
   }
 
-  // Insert inventory events (use transaction for performance)
-  const insertEvent = db.prepare(
-    'INSERT INTO inventory_events (id, facilityId, medicineId, type, quantity, timestamp, source, notes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
-  );
+  // Insert inventory events via authoritative inventory service
+  // Chronological sort ensures all receipts and resupplies precede dispensations
+  inventoryEvents.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
   const insertEvents = db.transaction((events: InventoryEvent[]) => {
     for (const e of events) {
-      insertEvent.run(e.id, e.facilityId, e.medicineId, e.type, e.quantity, e.timestamp, e.source, e.notes ?? null);
+      recordInventoryEvent({
+        facilityId: e.facilityId,
+        medicineId: e.medicineId,
+        eventType: e.type,
+        quantity: e.quantity,
+        timestamp: e.timestamp,
+        source: e.source,
+        batchNumber: e.batchNumber,
+        expiryDate: e.expiryDate,
+        notes: e.notes,
+      });
     }
   });
   insertEvents(inventoryEvents);

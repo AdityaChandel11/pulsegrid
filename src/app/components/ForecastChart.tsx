@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip, ReferenceLine } from 'recharts';
+import type { InventoryEventSource } from '@/types';
 
 interface ForecastData {
   p10Days: number;
@@ -9,7 +10,7 @@ interface ForecastData {
   p90Days: number;
   confidenceScore: number;
   surgeFlag: boolean;
-  source: string;
+  source: InventoryEventSource;
   lastUpdated: string;
 }
 
@@ -41,11 +42,11 @@ export default function ForecastChart({ facilityId, medicineId }: ForecastChartP
     );
   }
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <div className="glass-card animate-in" id="forecast-chart">
         <div className="card-header"><span className="card-title">📈 Stockout Forecast</span></div>
-        <div className="shimmer" style={{ height: 220 }} />
+        <div className="shimmer" style={{ height: 200, borderRadius: 8 }} />
       </div>
     );
   }
@@ -59,13 +60,13 @@ export default function ForecastChart({ facilityId, medicineId }: ForecastChartP
     );
   }
 
-  // Build chart data: days from now
+  // Generate fan chart data points for next 30 days
   const chartData = [];
-  const maxDays = data.p90Days + 5;
-  for (let d = 0; d <= maxDays; d++) {
-    const p10Pct = d <= data.p10Days ? 100 : Math.max(0, 100 - ((d - data.p10Days) / (data.p50Days - data.p10Days + 1)) * 80);
-    const p50Pct = d <= data.p50Days ? 100 : Math.max(0, 100 - ((d - data.p50Days) / (data.p90Days - data.p50Days + 1)) * 100);
-    const p90Pct = d <= data.p90Days ? Math.max(20, 100 - (d / data.p90Days) * 80) : Math.max(0, 20 - (d - data.p90Days) * 10);
+  for (let d = 0; d <= 30; d++) {
+    const p10Pct = d <= data.p10Days ? 100 : Math.max(0, 100 - ((d - data.p10Days) / 10) * 100);
+    const p50Pct = d <= data.p50Days ? 100 : Math.max(0, 100 - ((d - data.p50Days) / 10) * 100);
+    const p90Pct = d <= data.p90Days ? 100 : Math.max(0, 100 - ((d - data.p90Days) / 10) * 100);
+
     chartData.push({
       day: d,
       p10: Math.round(Math.min(p10Pct, 100)),
@@ -77,8 +78,11 @@ export default function ForecastChart({ facilityId, medicineId }: ForecastChartP
   const confidenceColor = data.confidenceScore >= 70 ? 'var(--status-ok)' :
     data.confidenceScore >= 40 ? 'var(--status-warning)' : 'var(--status-critical)';
 
-  const sourceLabel = data.source === 'barcode' ? 'barcode scan' :
-    data.source === 'api' ? 'API sync' : 'manual entry';
+  const sourceLabel =
+    data.source === 'BARCODE' ? 'barcode scan' :
+    data.source === 'OCR_INVOICE' ? 'invoice scan' :
+    data.source === 'VOICE_LOG' ? 'voice entry' :
+    data.source === 'SIMULATION' ? 'API sync' : 'manual entry';
 
   // Freshness calculation
   const updatedMs = Date.now() - new Date(data.lastUpdated).getTime();

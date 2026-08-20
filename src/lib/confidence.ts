@@ -24,7 +24,7 @@ export const CONFIDENCE_WEIGHT_B = 0.4; // Weight for HistoricalAccuracy
  */
 export function computeFreshnessScore(
   lastEventTimestamp: string,
-  source: EventSource = 'barcode',
+  source: EventSource = 'BARCODE',
 ): number {
   const clockMs = SimulationClock.getTime();
   const eventMs = new Date(lastEventTimestamp).getTime();
@@ -55,7 +55,7 @@ export function computeConfidence(params: {
   p90Days?: number;
   facilityId: string;
 }): number {
-  const { source = 'barcode', lastEventTimestamp, facilityId } = params;
+  const { source = 'BARCODE', lastEventTimestamp, facilityId } = params;
 
   const freshnessScore = computeFreshnessScore(lastEventTimestamp, source);
   const trackRecord = getTrackRecord(facilityId);

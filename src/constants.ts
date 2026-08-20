@@ -11,7 +11,7 @@ export const INVENTORY_EVENT_TYPES = [
   'RECEIVED', 'DISPENSED', 'TRANSFERRED_OUT', 'TRANSFERRED_IN', 'EXPIRED', 'DAMAGED',
 ] as const;
 
-export const EVENT_SOURCES = ['api', 'barcode', 'manual'] as const;
+export const EVENT_SOURCES = ['MANUAL', 'OCR_INVOICE', 'VOICE_LOG', 'BARCODE', 'SIMULATION'] as const;
 export type EventSource = (typeof EVENT_SOURCES)[number];
 
 export const STAFF_ROLES = ['doctor', 'nurse', 'pharmacist'] as const;
@@ -29,9 +29,11 @@ export const STAFF_CRITICAL_DEFICIT = 2;
 
 /** Source weight for confidence scoring */
 export const SOURCE_WEIGHTS: Record<EventSource, number> = {
-  api: 1.0,
-  barcode: 0.9,
-  manual: 0.6,
+  BARCODE:    0.95,  // highest fidelity — hardware scan
+  OCR_INVOICE: 0.85, // structured document extraction
+  MANUAL:     0.65,  // human entry, prone to error
+  VOICE_LOG:  0.60,  // transcription artefacts possible
+  SIMULATION: 0.70,  // stochastic model — no real-world verification
 };
 
 /** Recency decay parameters */

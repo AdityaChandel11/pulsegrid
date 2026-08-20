@@ -26,14 +26,13 @@ export async function GET(request: NextRequest) {
     )
   `).get(simDate, country) as { avgDays: number | null };
 
-  // Count of completed paired redistributions (TRANSFERRED_IN events from API)
+  // Count of completed paired redistributions (TRANSFERRED_IN events)
   const redistCount = db.prepare(`
     SELECT COUNT(*) AS cnt, COALESCE(SUM(quantity), 0) AS totalQty
     FROM inventory_events ie
     JOIN facilities f ON f.id = ie.facilityId
     WHERE f.country = ?
     AND ie.type = 'TRANSFERRED_IN'
-    AND ie.source = 'api'
   `).get(country) as { cnt: number; totalQty: number };
 
   // Safe / protected facility-medicine pairs (p50 > 10 days horizon)

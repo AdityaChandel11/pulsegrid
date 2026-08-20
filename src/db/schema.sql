@@ -20,14 +20,16 @@ CREATE TABLE IF NOT EXISTS medicines (
 );
 
 CREATE TABLE IF NOT EXISTS inventory_events (
-  id          TEXT PRIMARY KEY,
-  facilityId  TEXT NOT NULL REFERENCES facilities(id),
-  medicineId  TEXT NOT NULL REFERENCES medicines(id),
-  type        TEXT NOT NULL CHECK (type IN ('RECEIVED', 'DISPENSED', 'TRANSFERRED_OUT', 'TRANSFERRED_IN', 'EXPIRED', 'DAMAGED')),
-  quantity    INTEGER NOT NULL,
-  timestamp   TEXT NOT NULL,
-  source      TEXT NOT NULL CHECK (source IN ('api', 'barcode', 'manual')),
-  notes       TEXT
+  id           TEXT PRIMARY KEY,
+  facilityId   TEXT NOT NULL REFERENCES facilities(id),
+  medicineId   TEXT NOT NULL REFERENCES medicines(id),
+  type         TEXT NOT NULL CHECK (type IN ('RECEIVED', 'DISPENSED', 'TRANSFERRED_OUT', 'TRANSFERRED_IN', 'EXPIRED', 'DAMAGED')),
+  quantity     INTEGER NOT NULL CHECK (quantity > 0),
+  timestamp    TEXT NOT NULL,
+  source       TEXT NOT NULL CHECK (source IN ('MANUAL', 'OCR_INVOICE', 'VOICE_LOG', 'BARCODE', 'SIMULATION')),
+  batchNumber  TEXT,
+  expiryDate   TEXT,
+  notes        TEXT
 );
 
 CREATE TABLE IF NOT EXISTS beds (

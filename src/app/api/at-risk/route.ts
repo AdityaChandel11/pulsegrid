@@ -1,6 +1,7 @@
 import { type NextRequest } from 'next/server';
 import { getDb } from '@/db/connection';
 import { SimulationClock } from '@/lib/clock';
+import type { InventoryEventSource } from '@/types';
 
 export async function GET(request: NextRequest) {
   const country = request.nextUrl.searchParams.get('country');
@@ -50,7 +51,7 @@ export async function GET(request: NextRequest) {
     district: string;
     medicineName: string;
     medicineCategory: string;
-    latestSource: 'api' | 'barcode' | 'manual' | null;
+    latestSource: InventoryEventSource | null;
     latestTimestamp: string | null;
   }[];
 
@@ -68,7 +69,7 @@ export async function GET(request: NextRequest) {
     const riskScore = (p50Days * surgeMult) / confidenceWeight;
 
     // Source label & freshness
-    const source = r.latestSource || 'barcode';
+    const source: InventoryEventSource = r.latestSource || 'BARCODE';
     const lastUpdated = r.latestTimestamp || r.createdAt;
     const updatedMs = Math.max(0, now - new Date(lastUpdated).getTime());
     const updatedMins = Math.floor(updatedMs / 60000);

@@ -26,14 +26,24 @@ export interface Medicine {
 export type InventoryEventType =
   | 'RECEIVED' | 'DISPENSED' | 'TRANSFERRED_OUT' | 'TRANSFERRED_IN' | 'EXPIRED' | 'DAMAGED';
 
+/** Canonical intake-source enum — every path through the system must use one of these. */
+export type InventoryEventSource =
+  | 'MANUAL'
+  | 'OCR_INVOICE'
+  | 'VOICE_LOG'
+  | 'BARCODE'
+  | 'SIMULATION';
+
 export interface InventoryEvent {
   id: string;
   facilityId: string;
   medicineId: string;
   type: InventoryEventType;
   quantity: number;
-  timestamp: string; // ISO 8601
-  source: 'api' | 'barcode' | 'manual';
+  timestamp: string;        // ISO 8601
+  source: InventoryEventSource;
+  batchNumber?: string;     // optional — used by OCR / barcode intake
+  expiryDate?: string;      // ISO 8601 date — used by barcode / OCR intake
   notes?: string;
 }
 
@@ -86,11 +96,11 @@ export interface CountrySignal {
 // -> {
 //   p10Days: number; p50Days: number; p90Days: number;
 //   confidenceScore: number; surgeFlag: boolean;
-//   source: 'api' | 'barcode' | 'manual'; lastUpdated: string;
+//   source: InventoryEventSource; lastUpdated: string;
 // }
 // Example:
 // { "p10Days": 6, "p50Days": 9, "p90Days": 14, "confidenceScore": 72,
-//   "surgeFlag": false, "source": "barcode", "lastUpdated": "2026-08-19T04:12:00Z" }
+//   "surgeFlag": false, "source": "BARCODE", "lastUpdated": "2026-08-19T04:12:00Z" }
 
 // GET /api/beds/:facilityId
 // -> { ward: string; total: number; occupied: number; status: 'normal'|'warning'|'critical' }[]

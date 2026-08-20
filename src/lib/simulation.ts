@@ -12,7 +12,8 @@ import { computeConfidence } from './confidence';
 import { getLatestEventMeta, getCurrentStock } from './inventory';
 import { validatePredictionOnStockout } from './predictions';
 import { SimulationClock } from './clock';
-import type { InventoryEvent, InventoryEventType } from '@/types';
+import { recordInventoryEvent } from '@/services/inventoryService';
+import type { InventoryEventType } from '@/types';
 import type { Country } from '@/constants';
 
 interface SimulationTickResult {
@@ -120,7 +121,7 @@ export function stepSimulation(
     category: string;
   }[];
 
-  const newEvents: InventoryEvent[] = [];
+  let eventsGenerated = 0;
   const affectedPairs = new Set<string>();
 
   // Pick a subset of facilities for this tick (3-6 facilities active per tick)
@@ -165,35 +166,40 @@ export function stepSimulation(
       // True stochastic Poisson sampling
       const dispensedQty = Math.max(1, samplePoisson(lambda));
 
-      const sources: ('api' | 'barcode' | 'manual')[] = ['barcode', 'barcode', 'api', 'manual'];
-      const source = sources[Math.floor(Math.random() * sources.length)];
-
-      newEvents.push({
-        id: crypto.randomUUID(),
-        facilityId: fac.id,
-        medicineId: med.id,
-        type: 'DISPENSED',
-        quantity: dispensedQty,
-        timestamp,
-        source,
-        notes: isSurgeTarget
-          ? `Multi-day surge (${activeSurge!.multiplier}x demand, ${activeSurge!.remainingDays}d remaining)`
-          : 'Routine dispensary log',
-      });
+      try {
+        recordInventoryEvent({
+          facilityId: fac.id,
+          medicineId: med.id,
+          eventType: 'DISPENSED',
+          quantity: dispensedQty,
+          timestamp,
+          source: 'SIMULATION',
+          notes: isSurgeTarget
+            ? `Multi-day surge (${activeSurge!.multiplier}x demand, ${activeSurge!.remainingDays}d remaining)`
+            : 'Routine dispensary log',
+        });
+        eventsGenerated++;
+      } catch {
+        // Insufficient stock or validation failure — skip this dispensing event.
+      }
 
       // 15% chance of supplier replenishment
       if (Math.random() < 0.15) {
         const receivedQty = Math.floor(Math.random() * 200) + 100;
-        newEvents.push({
-          id: crypto.randomUUID(),
-          facilityId: fac.id,
-          medicineId: med.id,
-          type: 'RECEIVED' as InventoryEventType,
-          quantity: receivedQty,
-          timestamp,
-          source: 'api',
-          notes: 'Warehouse batch delivery arrived',
-        });
+        try {
+          recordInventoryEvent({
+            facilityId: fac.id,
+            medicineId: med.id,
+            eventType: 'RECEIVED' as InventoryEventType,
+            quantity: receivedQty,
+            timestamp,
+            source: 'SIMULATION',
+            notes: 'Warehouse batch delivery arrived',
+          });
+          eventsGenerated++;
+        } catch {
+          // Skip on validation error.
+        }
       }
     }
   }
@@ -205,20 +211,6 @@ export function stepSimulation(
       activeSurgesMap.delete(facId);
     }
   }
-
-  // Insert events within a SQLite transaction
-  const insertEvent = db.prepare(`
-    INSERT INTO inventory_events (id, facilityId, medicineId, type, quantity, timestamp, source, notes)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `);
-
-  const insertTxn = db.transaction((events: InventoryEvent[]) => {
-    for (const e of events) {
-      insertEvent.run(e.id, e.facilityId, e.medicineId, e.type, e.quantity, e.timestamp, e.source, e.notes ?? null);
-    }
-  });
-
-  insertTxn(newEvents);
 
   // Prediction validation loop: if stock hits 0, validate most recent prediction against actual stockout date
   for (const pairKey of affectedPairs) {
@@ -248,7 +240,7 @@ export function stepSimulation(
       try {
         const forecast = computeForecast(facId, medId);
         const meta = getLatestEventMeta(facId, medId);
-        const src = meta?.source ?? 'barcode';
+        const src = meta?.source ?? 'BARCODE';
         const lastUpdated = meta?.timestamp ?? timestamp;
 
         const confidence = computeConfidence({
@@ -302,7 +294,7 @@ export function stepSimulation(
   return {
     country,
     scenario,
-    eventsGenerated: newEvents.length,
+    eventsGenerated,
     updatedPairs: affectedPairs.size,
     activeSurges: surgeRow.count,
     timestamp,

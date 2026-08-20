@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import type { Country } from '@/constants';
+import type { InventoryEventSource } from '@/types';
 
 export interface AtRiskItem {
   facilityId: string;
@@ -17,7 +18,7 @@ export interface AtRiskItem {
   confidenceScore: number;
   surgeFlag: boolean;
   riskScore: number;
-  source: 'api' | 'barcode' | 'manual';
+  source: InventoryEventSource;
   lastUpdated: string;
   freshnessText: string;
 }

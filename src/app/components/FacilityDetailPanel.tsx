@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { Facility, Medicine } from '@/types';
+import type { Facility, Medicine, InventoryEventSource } from '@/types';
 import type { ActiveRoute } from './FacilityMap';
 import {
   AreaChart,
@@ -19,7 +19,7 @@ interface ForecastData {
   p90Days: number;
   confidenceScore: number;
   surgeFlag: boolean;
-  source: 'api' | 'barcode' | 'manual';
+  source: InventoryEventSource;
   lastUpdated: string;
 }
 
@@ -262,9 +262,13 @@ export default function FacilityDetailPanel({
 
   // Freshness & Source metadata formatting
   const sourceLabel =
-    forecast?.source === 'barcode'
+    forecast?.source === 'BARCODE'
       ? 'Barcode scan'
-      : forecast?.source === 'api'
+      : forecast?.source === 'OCR_INVOICE'
+      ? 'Invoice scan / OCR'
+      : forecast?.source === 'VOICE_LOG'
+      ? 'Voice log'
+      : forecast?.source === 'SIMULATION'
       ? 'e-Aushadhi / API sync'
       : 'Manual log';
 

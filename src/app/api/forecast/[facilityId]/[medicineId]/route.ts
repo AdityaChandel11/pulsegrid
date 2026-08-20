@@ -2,6 +2,7 @@ import { type NextRequest } from 'next/server';
 import { computeForecast } from '@/lib/forecast';
 import { computeConfidence } from '@/lib/confidence';
 import { getLatestEventMeta } from '@/lib/inventory';
+import { SimulationClock } from '@/lib/clock';
 
 export async function GET(
   _request: NextRequest,
@@ -13,7 +14,7 @@ export async function GET(
   const meta = getLatestEventMeta(facilityId, medicineId);
 
   const source = meta?.source ?? 'manual';
-  const lastUpdated = meta?.timestamp ?? new Date().toISOString();
+  const lastUpdated = meta?.timestamp ?? SimulationClock.getISO();
 
   const confidenceScore = computeConfidence({
     source,

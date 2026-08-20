@@ -3,3 +3,6 @@ pulsegrid.db-wal
 pulsegrid.db-shm
 node_modules/
 .next/
+.env
+next-env.d.ts
+tsconfig.tsbuildinfo

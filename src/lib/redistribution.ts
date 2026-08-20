@@ -11,6 +11,7 @@ import { getCurrentStock, getMedicineIdsAtFacility } from './inventory';
 import { computeForecast } from './forecast';
 import { computeConfidence } from './confidence';
 import { getLatestEventMeta } from './inventory';
+import { SimulationClock } from './clock';
 import type { Facility } from '@/types';
 
 interface Candidate {
@@ -241,8 +242,15 @@ export function executeTransfer(
   medicineId: string,
   quantity: number,
 ): { newStockAtSource: number; newStockAtDestination: number } {
+  const currentStock = getCurrentStock(sourceFacilityId, medicineId);
+  if (quantity > currentStock) {
+    throw new Error(
+      `Insufficient stock: transfer quantity (${quantity}) exceeds current stock (${currentStock}) at source facility ${sourceFacilityId}`,
+    );
+  }
+
   const db = getDb();
-  const now = new Date().toISOString();
+  const now = SimulationClock.getISO();
 
   const id1 = crypto.randomUUID();
   const id2 = crypto.randomUUID();

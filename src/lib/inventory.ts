@@ -6,6 +6,7 @@
  */
 
 import { getDb } from '@/db/connection';
+import { SimulationClock } from './clock';
 
 const INFLOW_TYPES = ['RECEIVED', 'TRANSFERRED_IN'] as const;
 const OUTFLOW_TYPES = ['DISPENSED', 'TRANSFERRED_OUT', 'EXPIRED', 'DAMAGED'] as const;
@@ -43,7 +44,7 @@ export function getDailyDispensedSeries(
 ): { date: string; qty: number }[] {
   const db = getDb();
 
-  const cutoff = new Date();
+  const cutoff = SimulationClock.now();
   cutoff.setDate(cutoff.getDate() - days);
   const cutoffISO = cutoff.toISOString();
 

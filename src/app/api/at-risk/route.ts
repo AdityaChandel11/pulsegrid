@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server';
 import { getDb } from '@/db/connection';
+import { SimulationClock } from '@/lib/clock';
 
 export async function GET(request: NextRequest) {
   const country = request.nextUrl.searchParams.get('country');
@@ -53,7 +54,7 @@ export async function GET(request: NextRequest) {
     latestTimestamp: string | null;
   }[];
 
-  const now = Date.now();
+  const now = SimulationClock.getTime();
 
   const result = rows.map((r) => {
     const p50Days = Math.max(0, Math.round((new Date(r.p50Date).getTime() - now) / (1000 * 60 * 60 * 24)));

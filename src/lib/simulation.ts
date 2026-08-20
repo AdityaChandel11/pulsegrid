@@ -1,14 +1,17 @@
 /**
  * PulseGrid — Live Demo Simulation Engine
  *
- * Generates continuous deterministic hospital inventory events (RECEIVED, DISPENSED)
- * and updates predictions and stock levels in real time in SQLite.
+ * Generates continuous stochastic hospital inventory events (RECEIVED, DISPENSED)
+ * using Poisson distribution, multi-day sustained surges, decoupled SimulationClock,
+ * and prediction validation on stockout.
  */
 
 import { getDb } from '@/db/connection';
 import { computeForecast } from './forecast';
 import { computeConfidence } from './confidence';
-import { getLatestEventMeta } from './inventory';
+import { getLatestEventMeta, getCurrentStock } from './inventory';
+import { validatePredictionOnStockout } from './predictions';
+import { SimulationClock } from './clock';
 import type { InventoryEvent, InventoryEventType } from '@/types';
 import type { Country } from '@/constants';
 
@@ -21,13 +24,76 @@ interface SimulationTickResult {
   timestamp: string;
 }
 
+interface ActiveSurge {
+  facilityId: string;
+  multiplier: number; // 3.0 to 5.0
+  remainingDays: number; // 3 to 7 days
+}
+
+// Active multi-day surges keyed by facilityId
+const activeSurgesMap = new Map<string, ActiveSurge>();
+
+/**
+ * Sample from a Poisson distribution with parameter lambda (mean consumption).
+ * Uses Knuth's algorithm for lambda < 30 and Gaussian approximation for large lambda.
+ */
+export function samplePoisson(lambda: number): number {
+  if (lambda <= 0) return 0;
+  if (lambda < 30) {
+    const L = Math.exp(-lambda);
+    let k = 0;
+    let p = 1;
+    do {
+      k++;
+      p *= Math.random();
+    } while (p > L);
+    return Math.max(0, k - 1);
+  }
+  // Gaussian approximation for large lambda: N(lambda, sqrt(lambda))
+  const u1 = Math.random();
+  const u2 = Math.random();
+  const z = Math.sqrt(-2 * Math.log(u1 || 1e-10)) * Math.cos(2 * Math.PI * u2);
+  return Math.max(0, Math.round(lambda + z * Math.sqrt(lambda)));
+}
+
+/**
+ * Obtain baseline consumption rate for a facility-medicine pair.
+ */
+function getFacilityMedicineBaseline(facilityId: string, medicineId: string, facilityType: string): number {
+  const db = getDb();
+  try {
+    const row = db.prepare(`
+      SELECT AVG(daily_sum) AS avg_daily
+      FROM (
+        SELECT DATE(timestamp) as d, SUM(quantity) as daily_sum
+        FROM inventory_events
+        WHERE facilityId = ? AND medicineId = ? AND type = 'DISPENSED'
+        GROUP BY DATE(timestamp)
+      )
+    `).get(facilityId, medicineId) as { avg_daily: number | null } | undefined;
+
+    if (row?.avg_daily && row.avg_daily > 0) {
+      return row.avg_daily;
+    }
+  } catch {
+    // Fall back to facility type defaults
+  }
+
+  if (facilityType === 'district') return 45;
+  if (facilityType === 'CHC') return 25;
+  return 12;
+}
+
 export function stepSimulation(
   country: Country,
   scenario: 'normal' | 'surge' = 'normal',
 ): SimulationTickResult {
   const db = getDb();
-  const now = new Date();
-  const timestamp = now.toISOString();
+
+  // Tick the logical simulation clock forward by 1 simulation day (86400000 ms)
+  const clockNow = SimulationClock.tick(86400000);
+  const timestamp = clockNow.toISOString();
+  const dateString = clockNow.toISOString().split('T')[0];
 
   // Get facilities in this country
   const facilities = db.prepare('SELECT id, name, type FROM facilities WHERE country = ?').all(country) as {
@@ -61,31 +127,43 @@ export function stepSimulation(
   const activeCount = Math.min(facilities.length, Math.floor(Math.random() * 4) + 3);
   const shuffledFacilities = [...facilities].sort(() => Math.random() - 0.5).slice(0, activeCount);
 
-  // If surge scenario, designate one primary surge facility
-  const surgeFacilityId = scenario === 'surge' ? shuffledFacilities[0].id : null;
+  // Multi-day surge management: if surge scenario, initiate or sustain a multi-day surge (3x-5x for 3-7 days)
+  if (scenario === 'surge') {
+    const targetFac = shuffledFacilities[0];
+    if (!activeSurgesMap.has(targetFac.id)) {
+      const multiplier = Math.round((3.0 + Math.random() * 2.0) * 10) / 10; // 3.0x to 5.0x
+      const duration = Math.floor(Math.random() * 5) + 3; // 3 to 7 days
+      activeSurgesMap.set(targetFac.id, {
+        facilityId: targetFac.id,
+        multiplier,
+        remainingDays: duration,
+      });
+    }
+  }
 
   for (const fac of shuffledFacilities) {
     // Pick 2-4 medicines per facility
     const medCount = Math.min(medicines.length, Math.floor(Math.random() * 3) + 2);
     const selectedMeds = [...medicines].sort(() => Math.random() - 0.5).slice(0, medCount);
 
+    const activeSurge = activeSurgesMap.get(fac.id);
+    const isSurgeTarget = Boolean(activeSurge);
+
     for (const med of selectedMeds) {
-      const isSurgeTarget = fac.id === surgeFacilityId;
       const pairKey = `${fac.id}::${med.id}`;
       affectedPairs.add(pairKey);
 
-      // Determine dispense quantity
-      let dispensedQty: number;
-      if (isSurgeTarget) {
-        // High surge burst: 45 - 90 units
-        dispensedQty = Math.floor(Math.random() * 46) + 45;
-      } else if (scenario === 'surge') {
-        // Elevated demand: 15 - 35 units
-        dispensedQty = Math.floor(Math.random() * 21) + 15;
-      } else {
-        // Normal demand: 4 - 18 units
-        dispensedQty = Math.floor(Math.random() * 15) + 4;
+      // Baseline consumption rate
+      const baselineRate = getFacilityMedicineBaseline(fac.id, med.id, fac.type);
+
+      // Apply surge multiplier if active surge is on this facility
+      let lambda = baselineRate;
+      if (activeSurge) {
+        lambda *= activeSurge.multiplier;
       }
+
+      // True stochastic Poisson sampling
+      const dispensedQty = Math.max(1, samplePoisson(lambda));
 
       const sources: ('api' | 'barcode' | 'manual')[] = ['barcode', 'barcode', 'api', 'manual'];
       const source = sources[Math.floor(Math.random() * sources.length)];
@@ -98,10 +176,12 @@ export function stepSimulation(
         quantity: dispensedQty,
         timestamp,
         source,
-        notes: isSurgeTarget ? 'Surge patient influx consumption' : 'Routine clinic dispensary log',
+        notes: isSurgeTarget
+          ? `Multi-day surge (${activeSurge!.multiplier}x demand, ${activeSurge!.remainingDays}d remaining)`
+          : 'Routine dispensary log',
       });
 
-      // 15% chance of supplier batch replenishment if normal, or emergency restock
+      // 15% chance of supplier replenishment
       if (Math.random() < 0.15) {
         const receivedQty = Math.floor(Math.random() * 200) + 100;
         newEvents.push({
@@ -118,6 +198,14 @@ export function stepSimulation(
     }
   }
 
+  // Decrement remaining days for all active multi-day surges
+  for (const [facId, surge] of activeSurgesMap.entries()) {
+    surge.remainingDays -= 1;
+    if (surge.remainingDays <= 0) {
+      activeSurgesMap.delete(facId);
+    }
+  }
+
   // Insert events within a SQLite transaction
   const insertEvent = db.prepare(`
     INSERT INTO inventory_events (id, facilityId, medicineId, type, quantity, timestamp, source, notes)
@@ -131,6 +219,15 @@ export function stepSimulation(
   });
 
   insertTxn(newEvents);
+
+  // Prediction validation loop: if stock hits 0, validate most recent prediction against actual stockout date
+  for (const pairKey of affectedPairs) {
+    const [facId, medId] = pairKey.split('::');
+    const currentStock = getCurrentStock(facId, medId);
+    if (currentStock <= 0) {
+      validatePredictionOnStockout(facId, medId, dateString);
+    }
+  }
 
   // Recalculate predictions for affected facility-medicine pairs
   const upsertPrediction = db.prepare(`
@@ -163,10 +260,10 @@ export function stepSimulation(
           facilityId: facId,
         });
 
-        // Compute future dates
-        const p10Date = new Date(now.getTime() + forecast.p10Days * 86400000).toISOString().split('T')[0];
-        const p50Date = new Date(now.getTime() + forecast.p50Days * 86400000).toISOString().split('T')[0];
-        const p90Date = new Date(now.getTime() + forecast.p90Days * 86400000).toISOString().split('T')[0];
+        // Compute future dates based on logical simulation clock
+        const p10Date = new Date(clockNow.getTime() + forecast.p10Days * 86400000).toISOString().split('T')[0];
+        const p50Date = new Date(clockNow.getTime() + forecast.p50Days * 86400000).toISOString().split('T')[0];
+        const p90Date = new Date(clockNow.getTime() + forecast.p90Days * 86400000).toISOString().split('T')[0];
 
         // Find existing prediction ID or generate new
         const existing = db.prepare(

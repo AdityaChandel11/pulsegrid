@@ -18,11 +18,18 @@ export async function POST(request: Request) {
     return Response.json({ error: 'quantity must be positive' }, { status: 400 });
   }
 
-  const result = executeTransfer(sourceFacilityId, facilityId, medicineId, quantity);
+  try {
+    const result = executeTransfer(sourceFacilityId, facilityId, medicineId, quantity);
 
-  return Response.json({
-    success: true,
-    newStockAtDestination: result.newStockAtDestination,
-    newStockAtSource: result.newStockAtSource,
-  });
+    return Response.json({
+      success: true,
+      newStockAtDestination: result.newStockAtDestination,
+      newStockAtSource: result.newStockAtSource,
+    });
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : 'Transfer failed' },
+      { status: 400 },
+    );
+  }
 }

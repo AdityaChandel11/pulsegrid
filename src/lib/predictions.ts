@@ -59,3 +59,43 @@ export function getAccuracyMultiplier(facilityId: string): number {
   // Scale: accuracyScore 0→0.5, 1→1.0
   return 0.5 + record.accuracyScore * 0.5;
 }
+
+/**
+ * When actual stock hits 0, query the most recent unresolved prediction,
+ * calculate the delta between predicted p50Date and actual stockout date,
+ * mark it resolved, and return the adjusted accuracy score.
+ */
+export function validatePredictionOnStockout(
+  facilityId: string,
+  medicineId: string,
+  actualStockoutDate: string,
+): { deltaDays: number; accuracyScore: number } | null {
+  const db = getDb();
+
+  const pred = db.prepare(`
+    SELECT id, p50Date
+    FROM predictions
+    WHERE facilityId = ? AND medicineId = ? AND resolvedActualDate IS NULL
+    ORDER BY createdAt DESC
+    LIMIT 1
+  `).get(facilityId, medicineId) as { id: string; p50Date: string } | undefined;
+
+  if (!pred) return null;
+
+  db.prepare(`
+    UPDATE predictions
+    SET resolvedActualDate = ?
+    WHERE id = ?
+  `).run(actualStockoutDate, pred.id);
+
+  const p50Time = new Date(pred.p50Date).getTime();
+  const actualTime = new Date(actualStockoutDate).getTime();
+  const deltaDays = Math.abs(p50Time - actualTime) / (1000 * 60 * 60 * 24);
+
+  const updatedRecord = getTrackRecord(facilityId);
+
+  return {
+    deltaDays,
+    accuracyScore: updatedRecord.accuracyScore,
+  };
+}

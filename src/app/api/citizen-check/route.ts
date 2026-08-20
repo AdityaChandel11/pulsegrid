@@ -1,6 +1,7 @@
 import { type NextRequest } from 'next/server';
 import { getCurrentStock, getLatestEventMeta } from '@/lib/inventory';
 import { computeForecast } from '@/lib/forecast';
+import { SimulationClock } from '@/lib/clock';
 
 export async function GET(request: NextRequest) {
   const facilityId = request.nextUrl.searchParams.get('facilityId');
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
   // Build freshness text
   let freshnessText: string;
   if (meta) {
-    const ageMs = Date.now() - new Date(meta.timestamp).getTime();
+    const ageMs = SimulationClock.getTime() - new Date(meta.timestamp).getTime();
     const ageMinutes = Math.floor(ageMs / (1000 * 60));
     const ageHours = Math.floor(ageMs / (1000 * 60 * 60));
     const ageDays = Math.floor(ageMs / (1000 * 60 * 60 * 24));

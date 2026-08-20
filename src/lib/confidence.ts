@@ -1,7 +1,9 @@
 /**
  * PulseGrid — Confidence Scoring
  *
- * confidence = 100 * sourceWeight * recencyDecay * spreadPenalty * accuracyMultiplier
+ * Deterministic weighted formula:
+ * Confidence = (WeightA * FreshnessScore) + (WeightB * HistoricalAccuracy)
+ * Freshness = SimulationClock - last_event_timestamp
  */
 
 import {
@@ -11,57 +13,56 @@ import {
   RECENCY_DECAY_MAX_HOURS,
 } from '@/constants';
 import type { EventSource } from '@/constants';
-import { getAccuracyMultiplier } from './predictions';
+import { getTrackRecord } from './predictions';
+import { SimulationClock } from './clock';
+
+export const CONFIDENCE_WEIGHT_A = 0.6; // Weight for FreshnessScore
+export const CONFIDENCE_WEIGHT_B = 0.4; // Weight for HistoricalAccuracy
+
+/**
+ * Compute freshness score (0-100) strictly from SimulationClock - last_event_timestamp.
+ */
+export function computeFreshnessScore(
+  lastEventTimestamp: string,
+  source: EventSource = 'barcode',
+): number {
+  const clockMs = SimulationClock.getTime();
+  const eventMs = new Date(lastEventTimestamp).getTime();
+  const ageMs = Math.max(0, clockMs - eventMs);
+  const ageHours = ageMs / (1000 * 60 * 60);
+
+  const sourceWeight = SOURCE_WEIGHTS[source] ?? 0.8;
+
+  let decay: number;
+  if (ageHours >= RECENCY_DECAY_MAX_HOURS) {
+    decay = RECENCY_DECAY_FLOOR;
+  } else {
+    decay = Math.max(RECENCY_DECAY_FLOOR, Math.pow(0.5, ageHours / RECENCY_DECAY_HALF_LIFE_HOURS));
+  }
+
+  return Math.max(0, Math.min(100, 100 * decay * sourceWeight));
+}
 
 /**
  * Compute confidence score (0-100) for a forecast.
+ * Formula: Confidence = (WeightA * FreshnessScore) + (WeightB * HistoricalAccuracy)
  */
 export function computeConfidence(params: {
-  source: EventSource;
+  source?: EventSource;
   lastEventTimestamp: string;
-  p10Days: number;
-  p50Days: number;
-  p90Days: number;
+  p10Days?: number;
+  p50Days?: number;
+  p90Days?: number;
   facilityId: string;
 }): number {
-  const { source, lastEventTimestamp, p10Days, p50Days, p90Days, facilityId } = params;
+  const { source = 'barcode', lastEventTimestamp, facilityId } = params;
 
-  const sourceWeight = SOURCE_WEIGHTS[source];
-  const recency = computeRecencyDecay(lastEventTimestamp);
-  const spread = computeSpreadPenalty(p10Days, p50Days, p90Days);
-  const accuracy = getAccuracyMultiplier(facilityId);
+  const freshnessScore = computeFreshnessScore(lastEventTimestamp, source);
+  const trackRecord = getTrackRecord(facilityId);
+  const historicalAccuracy = trackRecord.accuracyScore * 100; // 0-100 scale
 
-  const raw = 100 * sourceWeight * recency * spread * accuracy;
-  return Math.round(Math.max(0, Math.min(100, raw)));
-}
+  const confidence = (CONFIDENCE_WEIGHT_A * freshnessScore) +
+                     (CONFIDENCE_WEIGHT_B * historicalAccuracy);
 
-/**
- * Exponential decay based on how stale the most recent event is.
- * Half-life of 24 hours, floor of 0.1, maxes out at 96 hours.
- */
-function computeRecencyDecay(lastEventTimestamp: string): number {
-  const ageMs = Date.now() - new Date(lastEventTimestamp).getTime();
-  const ageHours = Math.max(0, ageMs / (1000 * 60 * 60));
-
-  if (ageHours >= RECENCY_DECAY_MAX_HOURS) return RECENCY_DECAY_FLOOR;
-
-  const decay = Math.pow(0.5, ageHours / RECENCY_DECAY_HALF_LIFE_HOURS);
-  return Math.max(RECENCY_DECAY_FLOOR, decay);
-}
-
-/**
- * Penalize wide prediction bands. As the p10-p90 spread grows relative
- * to the p50 value, confidence decreases.
- */
-function computeSpreadPenalty(p10Days: number, p50Days: number, p90Days: number): number {
-  if (p50Days <= 0) return 0.5;
-
-  const spread = p90Days - p10Days;
-  const ratio = spread / p50Days;
-
-  // ratio of 0 → penalty 1.0 (perfect); ratio >= 2 → penalty 0.3
-  if (ratio <= 0) return 1.0;
-  if (ratio >= 2) return 0.3;
-
-  return 1.0 - 0.35 * ratio;
+  return Math.round(Math.max(0, Math.min(100, confidence)));
 }

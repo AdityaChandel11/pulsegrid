@@ -1,5 +1,6 @@
 import { type NextRequest } from 'next/server';
 import { getDb } from '@/db/connection';
+import { SimulationClock } from '@/lib/clock';
 
 export async function GET(request: NextRequest) {
   const country = request.nextUrl.searchParams.get('country');
@@ -9,11 +10,12 @@ export async function GET(request: NextRequest) {
   }
 
   const db = getDb();
+  const simDate = SimulationClock.getDateString();
 
   // Stockout lead-time gained: average p50 days across all active predictions
   const avgP50 = db.prepare(`
     SELECT AVG(
-      MAX(0, CAST((julianday(p.p50Date) - julianday('now')) AS REAL))
+      MAX(0, CAST((julianday(p.p50Date) - julianday(?)) AS REAL))
     ) AS avgDays
     FROM predictions p
     JOIN facilities f ON f.id = p.facilityId
@@ -22,7 +24,7 @@ export async function GET(request: NextRequest) {
       SELECT MAX(p2.createdAt) FROM predictions p2
       WHERE p2.facilityId = p.facilityId AND p2.medicineId = p.medicineId
     )
-  `).get(country) as { avgDays: number | null };
+  `).get(simDate, country) as { avgDays: number | null };
 
   // Count of completed paired redistributions (TRANSFERRED_IN events from API)
   const redistCount = db.prepare(`
@@ -44,8 +46,8 @@ export async function GET(request: NextRequest) {
       SELECT MAX(p2.createdAt) FROM predictions p2
       WHERE p2.facilityId = p.facilityId AND p2.medicineId = p.medicineId
     )
-    AND (julianday(p.p50Date) - julianday('now')) > 10
-  `).get(country) as { cnt: number };
+    AND (julianday(p.p50Date) - julianday(?)) > 10
+  `).get(country, simDate) as { cnt: number };
 
   // Total tracked pairs
   const totalTracked = db.prepare(`
